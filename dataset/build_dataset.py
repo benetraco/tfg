@@ -23,7 +23,7 @@ class MRIDatasetBuilder:
         for sub_dir in sub_dirs:
             os.makedirs(os.path.join(self.output_folder, sub_dir), exist_ok=True)
     
-    def process_folders(self):
+    def build_dataset(self):
         """Processes all specified folders (train/test)."""
         for folder in self.folders:
             folder_path = os.path.join(self.input_folder, folder)
@@ -73,17 +73,55 @@ class MRIDatasetBuilder:
         """Saves a single slice as an NPY file."""
         path = os.path.join(self.output_folder, "npy", image_type, f"{example}_{index}.npy")
         np.save(path, slice_data)
+    
+    def show_sample(self, image_name=None, num_images=1):
+        """
+        Displays one or more flair images with their corresponding masks.
+        If image_name is provided, it will display the slices of that image, otherwise it will display num_images random images.
+        """
+        flair_path = os.path.join(self.output_folder, "images", "flair")
+        mask_path = os.path.join(self.output_folder, "images", "mask")
+        
+        images = os.listdir(flair_path)
+        if not images:
+            print("No images found in the dataset.")
+            return
+        
+        if image_name is None:
+            selected_images = np.random.choice(images, size=min(num_images, len(images)), replace=False)
+        else:
+            # image name is something like "123"
+            # images_names should be something like ["123_0.png", "123_1.png", ...] until the last slice of the image
+            images_names = [f"{image_name}_{i}.png" for i in range(self.slices_per_example)]
+            selected_images = [img_name for img_name in images_names if img_name in images]
+            if not selected_images:
+                print("No matching image slices found in the dataset. \n Image name should be in the following format: '123' where 123 is the example number and it should be in the dataset.")   
+                return
+
+        for img_name in selected_images:
+            flair_img = plt.imread(os.path.join(flair_path, img_name))
+            mask_img = plt.imread(os.path.join(mask_path, img_name))
+            
+            fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+            axes[0].imshow(flair_img, cmap="gray")
+            axes[0].set_title(f"Flair Image: {img_name}")
+            axes[1].imshow(mask_img, cmap="gray")
+            axes[1].set_title(f"Mask Image: {img_name}")
+            plt.show()
+
 
 # Example Usage
-data_folder = "/home/benet/data"
-input_folder = "VH"
-output_folder = "VH_slices"
-folders = ["train", "test"]
-flair_image = "flair.nii.gz"
-mask_image = "lesionMask.nii.gz"
-slices_per_example = 5
-slices_step = 3
-start_slice = 88
+# data_folder = "/home/benet/data"
+# input_folder = "VH"
+# output_folder = "VH2D""
+# folders = ["train", "test"]
+# flair_image = "flair.nii.gz"
+# mask_image = "lesionMask.nii.gz"
+# slices_per_example = 5
+# slices_step = 3
+# start_slice = 88
 
-dataset_builder = MRIDatasetBuilder(data_folder, input_folder, output_folder, folders, flair_image, mask_image, slices_per_example, slices_step, start_slice)
-dataset_builder.process_folders()
+# dataset_builder = MRIDatasetBuilder(data_folder, input_folder, output_folder, folders, flair_image, mask_image, slices_per_example, slices_step, start_slice)
+# dataset_builder.build_dataset()
+# dataset_builder.show_sample()
+# dataset_builder.show_sample(image_name="739")
