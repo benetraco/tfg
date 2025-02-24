@@ -37,14 +37,14 @@ def train(
     dataset_path="/home/benet/data/VH2D/npy/flair",  # Change to your dataset folder
     image_size=128,
     batch_size=4,
-    grad_accumulation_steps=2,
-    num_epochs=1,
+    grad_accumulation_steps=5,
+    num_epochs=10,
     start_model="google/ddpm-bedroom-256",
     device="cuda",
     model_save_name="finetuned_model",
     wandb_project="dm_finetune",
-    log_samples_every=25,
-    save_model_every=50,
+    log_samples_every=50,
+    save_model_every=100,
 ):
     # Initialize wandb for logging
     wandb.init(project=wandb_project, config=locals())
