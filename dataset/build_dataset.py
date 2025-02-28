@@ -2,6 +2,8 @@ import os
 import numpy as np
 import nibabel as nib
 import matplotlib.pyplot as plt
+from PIL import Image
+from torch.utils.data import Dataset
 
 class MRIDatasetBuilder:
     def __init__(self, data_folder="/home/benet/data", input_folder="VH", output_folder="VH2D", folders=["train", "test"], 
@@ -110,7 +112,27 @@ class MRIDatasetBuilder:
             plt.show()
 
 
-# Example Usage
+# Custom dataset
+class MRIDataset(Dataset):
+    def __init__(self, data_dir, transform=None):
+        self.data_dir = data_dir
+        self.transform = transform
+        self.image_files = [f for f in os.listdir(data_dir) if f.endswith(".png")]
+
+    def __len__(self):
+        return len(self.image_files)
+
+    def __getitem__(self, idx):
+        img_path = os.path.join(self.data_dir, self.image_files[idx])
+        image = Image.open(img_path).convert("L")  # Convert to grayscale
+
+        if self.transform:
+            image = self.transform(image)
+
+        return image
+
+
+##### Example Usage of the MRIDatasetBuilder
 # data_folder = "/home/benet/data"
 # input_folder = "VH"
 # output_folder = "VH2D""
@@ -125,3 +147,32 @@ class MRIDatasetBuilder:
 # dataset_builder.build_dataset()
 # dataset_builder.show_sample()
 # dataset_builder.show_sample(image_name="739")
+
+
+##### Example Usage of the MRIDataset
+# from torch.utils.data import DataLoader
+# from torchvision.transforms import Compose, Resize, CenterCrop, RandomHorizontalFlip, ToTensor, Normalize
+# from torchvision.transforms.functional import InterpolationMode
+# data_dir = "/home/benet/data/VH2D/images/flair"
+# resolution = 256
+# batch_size = 32
+# num_workers = 4
+
+# preprocess = Compose(
+#     [
+#         Resize(resolution, interpolation= InterpolationMode.BILINEAR), #getattr(InterpolationMode, config['processing']['interpolation'])),  # Smaller edge is resized to 256 preserving aspect ratio
+#         CenterCrop(resolution),  # Center crop to the desired squared resolution
+#         #RandomHorizontalFlip(),  # Horizontal flip may not be a good idea if we want generation only one laterality
+#         ToTensor(),  # Convert to PyTorch tensor
+#         Normalize(mean=[0.5], std=[0.5]),  # Map to (-1, 1) as a way to make data more similar to a Gaussian distribution
+#     ]
+# )
+
+# # Create dataset with the defined transformations
+# dataset = MRIDataset(data_dir, transform=preprocess)
+# # Create the dataloader
+# train_dataloader = DataLoader(
+#     dataset, batch_size=batch_size, num_workers= num_workers, shuffle=True
+# )
+# print(f"Number of samples in the dataset: {len(dataset)}")
+# print(f"Number of batches in the dataloader: {len(train_dataloader)}")

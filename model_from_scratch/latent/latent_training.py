@@ -8,6 +8,7 @@ while '.gitignore' not in os.listdir(repo_path): # while not in the root of the 
     
 sys.path.insert(0,str(repo_path)) if str(repo_path) not in sys.path else None
 exp_path = Path.cwd().resolve() # path to the experiment folder
+
 print(f"Repo Path: {repo_path}")
 print(f"Experiment Path: {exp_path}")
 
@@ -28,16 +29,21 @@ from torchvision.transforms import (
     InterpolationMode,
 )
 import wandb
+import datasets, diffusers
 from diffusers import (
     UNet2DModel,
     DDPMScheduler,
-)
+)   
 from diffusers import DDPMPipeline
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version
+from diffusers.utils.import_utils import is_xformers_available
 import logging
 from accelerate.logging import get_logger
 from accelerate import Accelerator
+
+# extra
+from packaging import version
 
 # import the MRIDataset class from the dataset folder
 from dataset.build_dataset import MRIDataset
@@ -52,20 +58,23 @@ logger = get_logger(__name__, log_level="INFO") # allow from info level and abov
 ######MAIN######
 def main():
 
-    ### 0. General setups
+    ### 0. General setup
     # load the config file
-    config_path = exp_path / 'config.yaml'
+    config_path = exp_path / 'config.yaml' # configuration file path (beter to call it from the args parser)
     with open(config_path) as file: # expects the config file to be in the same directory
         config = yaml.load(file, Loader=yaml.FullLoader)
-
+    
     # define logging directory
     pipeline_dir = repo_path / config['saving']['local']['outputs_dir'] / config['saving']['local']['pipeline_name']
+    # pipeline_dir = exp_path / config['saving']['local']['outputs_dir'] / config['saving']['local']['pipeline_name']
+    logging_dir = pipeline_dir / config['logging']['dir_name']
 
     # start the accelerator
     accelerator = Accelerator(
         gradient_accumulation_steps=config['training']['gradient_accumulation']['steps'],
         mixed_precision=config['training']['mixed_precision']['type'],
-        log_with=config['logging']['logger_name'],  # Keep this if you're using `log_with`
+        log_with= config['logging']['logger_name'],
+        logging_dir= logging_dir,
     )
 
     # define basic logging configuration
@@ -74,6 +83,15 @@ def main():
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO,
     )
+    # show the accelerator state as first log message
+    logger.info(accelerator.state, main_process_only=False)
+    # set the level of verbosity for the datasets and diffusers libraries, depending on the process type
+    if accelerator.is_local_main_process:
+        datasets.utils.logging.set_verbosity_warning()
+        diffusers.utils.logging.set_verbosity_info()
+    else:
+        datasets.utils.logging.set_verbosity_error()
+        diffusers.utils.logging.set_verbosity_error()
 
 
 
@@ -110,7 +128,19 @@ def main():
         down_block_types= config['model']['down_block_types'],
         up_block_types=config['model']['up_block_types'],
     )
+    # memory efficient attention for model
+    if config['training']['enable_xformers_memory_efficient_attention']:
+        if is_xformers_available():
+            import xformers
 
+            xformers_version = version.parse(xformers.__version__)
+            if xformers_version == version.parse("0.0.16"):
+                logger.warning(
+                    "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
+                )
+            model.enable_xformers_memory_efficient_attention()
+        else:
+            raise ValueError("xformers is not available. Make sure it is installed correctly")
 
     ### 3. Training
     ## 3.1 Setup the training
@@ -147,11 +177,13 @@ def main():
         model, optimizer, train_dataloader, lr_scheduler
     )
 
-    # init wandb tracker and save config file
+    # init tracker (wand or TB) and save config file
     if accelerator.is_main_process:
         run = os.path.split(__file__)[-1].split(".")[0] # get the name of the script
         accelerator.init_trackers(project_name=run) # intialize a run for all trackers
         wandb.save(str(config_path)) if config['logging']['logger_name'] == 'wandb' else None # save the config file in the wandb run
+
+
 
     logger.info('The training is starting...\n')
     logger.info(f'The number of examples is: {len(dataset)}\n')
@@ -165,11 +197,12 @@ def main():
     logger.info(f'Using device: {accelerator.device} with {accelerator.num_processes} processes. {config["training"]["mixed_precision"]["type"]} mixed precision.\n')
     logger.info(f'The image resolution is: {config["processing"]["resolution"]}\n')
     logger.info(f'The model has {model.num_parameters()} parameters.\n')
+
+    # lr scheduler info
     logger.info(f'The learning rate scheduler is: {config["training"]["lr_scheduler"]["name"]}\n')
     logger.info(f'The number of warmup steps is: {config["training"]["lr_scheduler"]["num_warmup_steps"]}\n')
 
-
-    # global variables (mainly useful for checkpointing)
+    # global variables
     global_step = 0
 
     #### 3.2 Training loop
@@ -178,24 +211,25 @@ def main():
         train_loss = [] # accumulated loss list
         pbar = tqdm(total=num_update_steps_per_epoch)
         pbar.set_description(f"Epoch {epoch}")
-        for batch in train_dataloader: # Loop over the batches
-            # batch = batch["images"] # get the images from the batch
-            with accelerator.accumulate(model):
-                noise = torch.randn_like(batch) # Sample noise to add to the images and also send it to device(2nd thing in device)
-                bs = batch.shape[0]
+        for latents in train_dataloader: # Loop over the batches
+
+            with accelerator.accumulate(model): # start gradient accumulation
+                noise = torch.randn_like(latents) # Sample noise to add to the images
+                bs = latents.shape[0] # batch size variable for later use
                 # Sample a random timestep for each image
                 timesteps = torch.randint( #create bs random integers from init=0 to end=timesteps, and send them to device (3rd thing in device)
                     low= 0,
-                    high= noise_scheduler.config.num_train_timesteps, ## added config. because deprecated attribute
+                    high= noise_scheduler.num_train_timesteps,
                     size= (bs,),
-                    device=batch.device ,
+                    device=latents.device ,
                 ).long() #int64
                 # Forward diffusion process: add noise to the clean images according to the noise magnitude at each timestep
-                noisy_images = noise_scheduler.add_noise(batch, noise, timesteps)
+                noisy_images = noise_scheduler.add_noise(latents, noise, timesteps)
                 # Get the model prediction, #### This part changes according to the prediction type (e.g. epsilon, sample, etc.)
                 noise_pred = model(noisy_images, timesteps).sample # sample tensor
                 # Calculate the loss
-                loss = F.mse_loss(noise_pred.float(), noise.float())
+                loss = F.mse_loss(noise_pred.float(), noise.float(), reduction='mean')
+                
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(config['processing']['batch_size'])).mean()
                 # append the loss to the train loss
@@ -206,11 +240,12 @@ def main():
                 if accelerator.sync_gradients: # gradient clipping
                     accelerator.clip_grad_norm_(model.parameters(), config['training']['gradient_clip']['max_norm'])
                 # Update
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
+                optimizer.step() # update the weights
+                lr_scheduler.step() # Update the learning rate
+                optimizer.zero_grad() # reset the gradients
+            #### gradient accumulation ends here
             
-            # updates and checkpoint saving happens only if the gradients are synced
+            # logging and checkpoint saving happens only if the gradients are synced
             if accelerator.sync_gradients:
                 # Update the progress bar
                 pbar.update(1)
@@ -228,49 +263,48 @@ def main():
             # step logging
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             accelerator.log(values=logs, step=global_step)
-            pbar.set_postfix(**logs)
-        # Close the progress bar at the end of the epoch
+            pbar.set_postfix(**logs) # add to the end of the progress bar
+            # Close the progress bar at the end of the epoch
         pbar.close()
-        accelerator.wait_for_everyone() # wait for all processes to finish before saving the model
-
-
+        accelerator.wait_for_everyone() # wait for all processes to finish the epoch
 
         ##### 4. Saving the model and visual samples
-        # generate visual samples to track training performance and save when in saving epoch
-        if accelerator.is_main_process:
-            if epoch % config['logging']['images']['freq_epochs'] == 0 or epoch == num_epochs - 1: # if in saving epoch or last one
-                # unwrape the model
-                model = accelerator.unwrap_model(model)
-                # create pipeline
-                pipeline = DDPMPipeline(unet=model, scheduler=noise_scheduler)
-                # create generator to make generation deterministic
-                generator = torch.Generator(device=pipeline.device).manual_seed(17844)
-                # generate images
-                images = pipeline(
-                    batch_size=config['logging']['images']['batch_size'],
-                    generator=generator,
-                    output_type='numpy' # output as numpy array
-                ).images # get the numpy images
-                if config['logging']['logger_name'] == 'tensorboard': # if using tensorboard NOT MY CASE
-                    accelerator.get_tracker('tensorboard').add_images(
-                        "test_samples", images.transpose(0, 3, 1, 2), epoch
-                    )
+        if accelerator.is_main_process: # only main process saves the model
+            if epoch % config['logging']['images']['freq_epochs'] == 0 or epoch == num_epochs - 1: # if in image saving epoch or last one
+                # create random noise
+                latent_inf = torch.randn( # Use seed to denoise always the same images
+                    config['logging']['images']['batch_size'], config['model']['in_channels'],
+                    config['processing']['resolution'], config['processing']['resolution'],
+                    generator=torch.manual_seed(17844)
+                ).to(accelerator.device)
+                latent_inf *= noise_scheduler.init_noise_sigma # init noise is 1.0 in vanilla case
+                # denoise images
+                for t in tqdm(noise_scheduler.timesteps): # markov chain
+                    latent_inf = noise_scheduler.scale_model_input(latent_inf, t) # # Apply scaling, no change in vanilla case
+                    with torch.no_grad(): # predict the noise residual with the unet
+                        noise_pred = model(latent_inf, t).sample
+                    latent_inf = noise_scheduler.step(noise_pred, t, latent_inf).prev_sample # compute the previous noisy sample x_t -> x_t-1
+                # log images
+                if config['logging']['logger_name'] == 'tensorboard':
+                    for i in range (4):
+                        accelerator.get_tracker('tensorboard').add_images(
+                            f"latent{i}", latent_inf[:,i:i+1], epoch
+                        )
                 elif config['logging']['logger_name'] == 'wandb':
-                    accelerator.get_tracker('wandb').log(
-                        {"test_samples": [wandb.Image(image) for image in images], "epoch": epoch},
-                        step=global_step,
-                    )
-                # save model
-                if epoch % config['saving']['local']['saving_frequency'] == 0 or epoch == num_epochs - 1: # if in saving epoch or last one
-                    pipeline.save_pretrained(str(pipeline_dir))
-                    logger.info(f"Saving model to {pipeline_dir}")
-    
+                    for i in range (4): # log the 4 latent channels
+                        accelerator.get_tracker('wandb').log(
+                            {f"latent_{i}": [wandb.Image(latent_inf[b,i], mode='F') for b in range(config['logging']['images']['batch_size'])]},
+                            step=global_step,
+                        )
+            # save model
+            if epoch % config['saving']['local']['saving_frequency'] == 0 or epoch == num_epochs - 1: # if in model saving epoch or last one
+                # create pipeline # unwrap the model
+                pipeline = DDPMPipeline(unet=accelerator.unwrap_model(model), scheduler=noise_scheduler)
+                pipeline.save_pretrained(str(pipeline_dir))
+                logger.info(f"Saving model to {pipeline_dir}")
     logger.info("Finished training!\n")
     # stop tracking
     accelerator.end_training()
-
-
-############################################################################################################
-
+    
 if __name__ == "__main__":
     main()

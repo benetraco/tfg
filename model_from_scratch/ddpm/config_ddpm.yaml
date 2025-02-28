@@ -30,9 +30,9 @@ model:
   - "DownBlock2D"
   - "DownBlock2D"
   - "AttnDownBlock2D"  # a ResNet downsampling block with spatial self-attention
-  - "DownBlock2D" # originaly a attention block, changed to a regular block, considr using attention block
+  - "AttnDownBlock2D" # originaly a attention block, changed to a regular block, considr using attention block
   up_block_types: !!python/tuple # Describes the type of block to use for upsampling
-  - "UpBlock2D"
+  - "AttnUpBlock2D"
   - "AttnUpBlock2D"  # a ResNet upsampling block with spatial self-attention
   - "UpBlock2D"
   - "UpBlock2D"  # a regular ResNet upsampling block
@@ -60,6 +60,8 @@ training:
   noise_scheduler:
     num_train_timesteps: 1000
     beta_schedule: "linear" # originally using "squaredcos_cap_v2", changed to linear
+    beta_start: 0.0001 # default 0.0001
+    beta_end: 0.02 # default 0.02
 
 # 4. Saving and logging
 saving:
