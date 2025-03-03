@@ -114,10 +114,11 @@ class MRIDatasetBuilder:
 
 # Custom dataset
 class MRIDataset(Dataset):
-    def __init__(self, data_dir, transform=None):
+    def __init__(self, data_dir, transform=None, latents=False):
         self.data_dir = data_dir
         self.transform = transform
         self.image_files = [f for f in os.listdir(data_dir) if f.endswith(".png")]
+        self.latents = latents
 
     def __len__(self):
         return len(self.image_files)
@@ -126,6 +127,8 @@ class MRIDataset(Dataset):
         img_path = os.path.join(self.data_dir, self.image_files[idx])
         image = Image.open(img_path).convert("L")  # Convert to grayscale
 
+        if self.latents:
+            image = image.convert("RGB")  # Convert to 3-channel RGB
         if self.transform:
             image = self.transform(image)
 
