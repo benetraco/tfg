@@ -14,7 +14,7 @@ processing:
 
 # 3. Training
 training:
-  num_epochs: 20 # Number of epochs to train for
+  num_epochs: 5 # Number of epochs to train for
   gradient_accumulation:
     steps: 16 # Number of gradient accumulation steps
   mixed_precision:
@@ -36,10 +36,10 @@ saving:
   local:
     outputs_dir: 'results/pipelines' # Parent directory for saving outputs
     pipeline_name: 'fintuned_vae' # Name of the pipeline
-    checkpoint_frequency: 10000 # How often to save checkpoints (in steps)
-    saving_frequency: 10 # How often to save the model (in epochs)
+    checkpoint_frequency: 50 # How often to save checkpoints (in steps)
+    saving_frequency: 1 # How often to save the model (in epochs)
 logging:
   logger_name: 'wandb' # Name of the logger
   images:
     freq_epochs: 1 # How often to save images (in epochs)
-    batch_size: 4 # Batch size for image generation
+    batch_size: 3 # Batch size for image generation
