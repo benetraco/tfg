@@ -96,11 +96,8 @@ def main():
     )
 
 
-    ### 2. Model definition
+    ### 2. Model loading 
     vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae").to(accelerator.device)
-    vae = accelerator.prepare(vae) # prepare the model with the accelerator
-    vae = accelerator.unwrap_model(vae) # unwrap the model to allow training
-    vae.train()
 
     ### 3. Training
     ## 3.1 Setup the training
@@ -152,9 +149,38 @@ def main():
     logger.info(f'The learning rate scheduler is: {config["training"]["lr_scheduler"]["name"]}\n')
     logger.info(f'The number of warmup steps is: {config["training"]["lr_scheduler"]["num_warmup_steps"]}\n')
 
-
+    ## Log images before training to check the initial performance
     # global variables (mainly useful for checkpointing)
     global_step = 0
+
+    # Choose num_images random images from the dataset
+    num_images = config['logging']['images']['batch_size']
+    np.random.seed(17844)
+    indices = np.random.choice(len(dataset), num_images, replace=False)
+    images = [dataset[i] for i in indices]
+    images = torch.stack(images).to(accelerator.device)
+    
+    # Encode and decode the images using the pretrained VAE
+    with torch.no_grad():
+        latents = vae.encode(images).latent_dist.sample()
+        reconstructions = vae.decode(latents).sample
+    
+    # Log the original and reconstruction images (before training)
+    if config['logging']['logger_name'] == 'wandb':
+        wandb.log(
+            {
+                "original": [wandb.Image(img) for img in images.cpu()],
+                "reconstructions": [wandb.Image(img) for img in reconstructions.cpu()],
+                "latents": [wandb.Image(img) for img in latents.cpu()],
+            },
+            step=global_step,
+        )
+    logger.info(f"Initial images saved and logged at global_step {global_step}")
+
+    ## Prepare the model for training
+    vae = accelerator.prepare(vae) # prepare the model with the accelerator
+    vae = accelerator.unwrap_model(vae) # unwrap the model to allow training
+    vae.train()
 
     #### 3.2 Training loop
     for epoch in range(num_epochs): # Loop over the epochs
@@ -213,7 +239,7 @@ def main():
         # generate visual samples to track training performance and save when in saving epoch
         if accelerator.is_main_process:
             if epoch % config['logging']['images']['freq_epochs'] == 0 or epoch == num_epochs - 1: # if in saving epoch or last one
-                # unwrape the model
+                # unwrape the model 
                 vae = accelerator.unwrap_model(vae)
                 num_images = config['logging']['images']['batch_size']
                 # choose num_images random images
@@ -237,8 +263,8 @@ def main():
                     )
             # save model
             if epoch % config['saving']['local']['saving_frequency'] == 0 or epoch == num_epochs - 1:
-                accelerator.save_state(pipeline_dir)
-                logger.info(f"Saving vae to {pipeline_dir}")
+                vae.save_pretrained(str(pipeline_dir))
+                logger.info(f"Saving VAE to {pipeline_dir}")
     
     logger.info("Finished training!\n")
     # stop tracking
