@@ -179,7 +179,6 @@ def main():
         pbar = tqdm(total=num_update_steps_per_epoch)
         pbar.set_description(f"Epoch {epoch}")
         for batch in train_dataloader: # Loop over the batches
-            # batch = batch["images"] # get the images from the batch
             with accelerator.accumulate(model):
                 noise = torch.randn_like(batch) # Sample noise to add to the images and also send it to device(2nd thing in device)
                 bs = batch.shape[0]
@@ -251,11 +250,8 @@ def main():
                     generator=generator,
                     output_type='numpy' # output as numpy array
                 ).images # get the numpy images
-                if config['logging']['logger_name'] == 'tensorboard': # if using tensorboard NOT MY CASE
-                    accelerator.get_tracker('tensorboard').add_images(
-                        "test_samples", images.transpose(0, 3, 1, 2), epoch
-                    )
-                elif config['logging']['logger_name'] == 'wandb':
+
+                if config['logging']['logger_name'] == 'wandb':
                     accelerator.get_tracker('wandb').log(
                         {"test_samples": [wandb.Image(image) for image in images], "epoch": epoch},
                         step=global_step,
