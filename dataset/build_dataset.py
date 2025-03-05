@@ -1,9 +1,24 @@
+#Libraries
 import os
 import numpy as np
 import nibabel as nib
 import matplotlib.pyplot as plt
 from PIL import Image
 from torch.utils.data import Dataset
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from torchvision.transforms import (
+    Compose,
+    Resize,
+    CenterCrop,
+    ToTensor,
+    Normalize,
+    InterpolationMode,
+)
+from diffusers import AutoencoderKL
+from PIL import Image
+from pathlib import Path
 
 class MRIDatasetBuilder:
     def __init__(self, data_folder="/home/benet/data", input_folder="VH", output_folder="VH2D", folders=["train", "test"], 
@@ -133,12 +148,67 @@ class MRIDataset(Dataset):
             image = self.transform(image)
 
         return image
+    
+
+class LatentImageProcessor:
+    def __init__(self, repo_path, input_dir = "/home/benet/data/VH2D/images/flair", output_dir = "/home/benet/data/VH2D/images/latent_flair", resolution = 256): 
+        self.repo_path = repo_path
+        self.resolution = resolution
+        
+        # Dataset and Latent Directory Setup
+        self.input_dir = input_dir
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(exist_ok=True)
+
+        # Define the image preprocessing pipeline
+        self.preprocess = Compose(
+            [
+                Resize(self.resolution, interpolation=InterpolationMode.BILINEAR), 
+                CenterCrop(self.resolution),  # Center crop to the desired squared resolution
+                ToTensor(),  # Convert to PyTorch tensor
+                Normalize(mean=[0.5], std=[0.5]),  # Map to (-1, 1) as a way to make data more similar to a Gaussian distribution
+            ]
+        )
+
+        # Device setup
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Device: {self.device}")
+
+        # Load VAE model
+        pipeline_dir = self.repo_path / 'results/pipelines' / 'fintuned_vae'
+        self.vae = AutoencoderKL.from_pretrained(pipeline_dir)
+        self.vae.to(self.device).eval()
+
+    def process_images(self):
+        # Get image files from the dataset directory
+        image_files = [f for f in os.listdir(self.input_dir) if f.endswith(".png")]
+        print(f"Found {len(image_files)} images in the dataset folder")
+
+        # Process each image and save latents
+        with torch.no_grad():
+            for image_file in image_files:
+                img_path = os.path.join(self.input_dir, image_file)
+                # Remove .png extension and add '_latent' in the image name
+                image_file = image_file.split('.')[0] + "_latent"
+                image = Image.open(img_path).convert("RGB")
+
+                image = self.preprocess(image).unsqueeze(0).to(self.device)
+                latent = self.vae.encode(image).latent_dist.sample().squeeze(0)
+                
+                # Save the latent images
+                latent = latent.cpu().numpy()
+                for j in range(4):
+                    plt.imsave(self.output_dir / f"{image_file}_{j}.png", latent[j], cmap="gray")
+            
+            print(f"Latent images saved in {self.output_dir}")
+
+
 
 
 ##### Example Usage of the MRIDatasetBuilder
 # data_folder = "/home/benet/data"
 # input_folder = "VH"
-# output_folder = "VH2D""
+# output_folder = "VH2D"
 # folders = ["train", "test"]
 # flair_image = "flair.nii.gz"
 # mask_image = "lesionMask.nii.gz"
@@ -179,3 +249,14 @@ class MRIDataset(Dataset):
 # )
 # print(f"Number of samples in the dataset: {len(dataset)}")
 # print(f"Number of batches in the dataloader: {len(train_dataloader)}")
+
+
+##### Example Usage of the LatentImageProcessor
+# from pathlib import Path
+# import os, sys
+# repo_path= Path.cwd().resolve()
+# while '.gitignore' not in os.listdir(repo_path): # while not in the root of the repo
+#     repo_path = repo_path.parent #go up one level
+#     print(repo_path)
+# processor = LatentImageProcessor(repo_path)
+# processor.process_images()
