@@ -129,29 +129,45 @@ class MRIDatasetBuilder:
 
 # Custom dataset
 class MRIDataset(Dataset):
-    def __init__(self, data_dir, transform=None, latents=False):
+    def __init__(self, data_dir, transform=None, latents=False, RGB=False):
         self.data_dir = data_dir
         self.transform = transform
-        self.image_files = [f for f in os.listdir(data_dir) if f.endswith(".png")]
         self.latents = latents
+        self.RGB = RGB
+        if latents:
+            self.image_files = sorted([f for f in os.listdir(data_dir) if f.endswith(".npy")])
+        else:
+            self.image_files = sorted([f for f in os.listdir(data_dir) if f.endswith(".png")])
 
     def __len__(self):
-        return len(self.image_files)
+        return len(self.image_files) // 4 if self.latents else len(self.image_files)
 
     def __getitem__(self, idx):
-        img_path = os.path.join(self.data_dir, self.image_files[idx])
-        image = Image.open(img_path).convert("L")  # Convert to grayscale
-
         if self.latents:
-            image = image.convert("RGB")  # Convert to 3-channel RGB
-        if self.transform:
-            image = self.transform(image)
+            # Load four consecutive images as one sample
+            img_paths = self.image_files[idx * 4 : (idx + 1) * 4]
+            images = [np.load(os.path.join(self.data_dir, img_path)) for img_path in img_paths]
 
-        return image
+            if self.transform:
+                images = [self.transform(img) for img in images]
+            # Stack images along the channel dimension (4, 64, 64)
+            latents = torch.cat(images, dim=0)
+            return latents  # Shape: (4, 64, 64)
+
+        else:    
+            img_path = os.path.join(self.data_dir, self.image_files[idx])
+            image = Image.open(img_path).convert("L")  # Convert to grayscale
+
+            if self.RGB:
+                image = image.convert("RGB")  # Convert to 3-channel RGB
+            if self.transform:
+                image = self.transform(image)
+
+            return image       
     
 
 class LatentImageProcessor:
-    def __init__(self, repo_path, input_dir = "/home/benet/data/VH2D/images/flair", output_dir = "/home/benet/data/VH2D/images/latent_flair", resolution = 256): 
+    def __init__(self, repo_path, input_dir = "/home/benet/data/VH2D/images/flair", output_dir = "/home/benet/data/VH2D/latent_flair", resolution = 256): 
         self.repo_path = repo_path
         self.resolution = resolution
         
@@ -198,7 +214,7 @@ class LatentImageProcessor:
                 # Save the latent images
                 latent = latent.cpu().numpy()
                 for j in range(4):
-                    plt.imsave(self.output_dir / f"{image_file}_{j}.png", latent[j], cmap="gray")
+                    np.save(self.output_dir / f"{image_file}_{j}.npy", latent[j])
             
             print(f"Latent images saved in {self.output_dir}")
 

@@ -34,7 +34,7 @@ from diffusers import (
     UNet2DModel,
     DDPMScheduler,
 )   
-from diffusers import DDPMPipeline
+from diffusers import DDPMPipeline, AutoencoderKL
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version
 from diffusers.utils.import_utils import is_xformers_available
@@ -60,21 +60,19 @@ def main():
 
     ### 0. General setup
     # load the config file
-    config_path = exp_path / 'config.yaml' # configuration file path (beter to call it from the args parser)
+    config_path = exp_path / 'config_latent.yaml' # configuration file path (beter to call it from the args parser)
     with open(config_path) as file: # expects the config file to be in the same directory
         config = yaml.load(file, Loader=yaml.FullLoader)
     
     # define logging directory
     pipeline_dir = repo_path / config['saving']['local']['outputs_dir'] / config['saving']['local']['pipeline_name']
     # pipeline_dir = exp_path / config['saving']['local']['outputs_dir'] / config['saving']['local']['pipeline_name']
-    logging_dir = pipeline_dir / config['logging']['dir_name']
 
     # start the accelerator
     accelerator = Accelerator(
         gradient_accumulation_steps=config['training']['gradient_accumulation']['steps'],
         mixed_precision=config['training']['mixed_precision']['type'],
         log_with= config['logging']['logger_name'],
-        logging_dir= logging_dir,
     )
 
     # define basic logging configuration
@@ -101,16 +99,12 @@ def main():
     # Define the transformations to apply to the images
     preprocess = Compose(
         [
-            Resize(config['processing']['resolution'], interpolation= InterpolationMode.BILINEAR), #getattr(InterpolationMode, config['processing']['interpolation'])),  # Smaller edge is resized to 256 preserving aspect ratio
-            CenterCrop(config['processing']['resolution']),  # Center crop to the desired squared resolution
-            #RandomHorizontalFlip(),  # Horizontal flip may not be a good idea if we want generation only one laterality
             ToTensor(),  # Convert to PyTorch tensor
-            Normalize(mean=[0.5], std=[0.5]),  # Map to (-1, 1) as a way to make data more similar to a Gaussian distribution
         ]
     )
 
     # Create dataset with the defined transformations
-    dataset = MRIDataset(data_dir, transform=preprocess)
+    dataset = MRIDataset(data_dir, transform=preprocess, latents=True) # create the dataset
     logger.info(f"Dataset loaded with {len(dataset)} images") # show info about the dataset
     # Create the dataloader
     train_dataloader = DataLoader(
@@ -119,6 +113,12 @@ def main():
 
 
     ### 2. Model definition
+    # Load the VAE model
+    # vae = AutoencoderKL.from_pretrained(repo_path / config['saving']['local']['outputs_dir'] / config['saving']['local']['vae_name'])
+    vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae")
+    vae.eval() # set the model to evaluation mode
+
+    # Create the UNet model
     model = UNet2DModel(
         sample_size=config['processing']['resolution'],  # the target image resolution
         in_channels=config['model']['in_channels'],  # the number of input channels, 3 for RGB images
@@ -285,17 +285,21 @@ def main():
                         noise_pred = model(latent_inf, t).sample
                     latent_inf = noise_scheduler.step(noise_pred, t, latent_inf).prev_sample # compute the previous noisy sample x_t -> x_t-1
                 # log images
-                if config['logging']['logger_name'] == 'tensorboard':
-                    for i in range (4):
-                        accelerator.get_tracker('tensorboard').add_images(
-                            f"latent{i}", latent_inf[:,i:i+1], epoch
-                        )
-                elif config['logging']['logger_name'] == 'wandb':
+                if config['logging']['logger_name'] == 'wandb':
                     for i in range (4): # log the 4 latent channels
                         accelerator.get_tracker('wandb').log(
                             {f"latent_{i}": [wandb.Image(latent_inf[b,i], mode='F') for b in range(config['logging']['images']['batch_size'])]},
                             step=global_step,
                         )
+                    # log the decoded images
+                    latent_inf = latent_inf.to('cpu')
+                    reconstructed = vae.decode(latent_inf).sample
+                    print(reconstructed.shape)
+                    # print(reconstructed.shape)
+                    accelerator.get_tracker('wandb').log(
+                        {"reconstructed": [wandb.Image(reconstructed[b][0], mode='F') for b in range(config['logging']['images']['batch_size'])]},
+                        step=global_step,
+                    )
             # save model
             if epoch % config['saving']['local']['saving_frequency'] == 0 or epoch == num_epochs - 1: # if in model saving epoch or last one
                 # create pipeline # unwrap the model
