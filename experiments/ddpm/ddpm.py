@@ -54,7 +54,7 @@ def main():
 
     ### 0. General setups
     # load the config file
-    config_path = exp_path / 'config.yaml'
+    config_path = exp_path / 'config_ddpm.yaml'
     with open(config_path) as file: # expects the config file to be in the same directory
         config = yaml.load(file, Loader=yaml.FullLoader)
 

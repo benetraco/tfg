@@ -127,6 +127,98 @@ class MRIDatasetBuilder:
             plt.show()
 
 
+
+class MRIHealthyDatasetBuilder:
+    def __init__(self, data_folder="/home/benet/data", input_folder="CamCAN", output_folder="Healthy2D/CamCAN", 
+                 slices_per_example=10, slices_step=1, start_slice=83):
+        self.data_folder = data_folder
+        self.input_folder = os.path.join(data_folder, input_folder)
+        self.output_folder = os.path.join(data_folder, output_folder)
+        self.slices_per_example = slices_per_example
+        self.slices_step = slices_step
+        self.start_slice = start_slice
+        self._create_output_dirs()
+    
+    def _create_output_dirs(self):
+        """Creates necessary output directories."""
+        os.makedirs(os.path.join(self.output_folder, "images"), exist_ok=True)
+        os.makedirs(os.path.join(self.output_folder, "npy"), exist_ok=True)
+    
+    def build_dataset(self):
+        """Processes all specified folders (train/test)."""
+        examples_folders = sorted(os.listdir(self.input_folder))
+        print(len(examples_folders))
+        for example_id in examples_folders:
+            # if example is a csv file, skip it
+            if example_id.endswith(".csv"):
+                continue
+            example_folder = os.path.join(self.input_folder, example_id)
+            self._process_example(example_folder, example_id)
+
+    def _process_example(self, example_folder, example_id):
+        """Processes a single example folder."""
+        # the example is the file in the folder
+        for file in os.listdir(example_folder):
+            if file.endswith(".nii.gz"):
+                example = file
+
+        example_path = os.path.join(example_folder, example)
+        
+        data = nib.load(example_path).get_fdata()
+        
+        self._save_slices(example_id, data)
+    
+    def _save_slices(self, example_id, data):
+        """Extracts and saves slices as PNG and NPY files."""
+        end_slice = self.start_slice + self.slices_per_example * self.slices_step
+        for j, i in enumerate(range(self.start_slice, end_slice, self.slices_step)):
+            data_slice = np.rot90(data[:, :, i])
+            
+            self._save_image(data_slice, example_id, j)
+            self._save_npy(data_slice, example_id, j)
+    
+    def _save_image(self, slice_data, example_id, index):
+        """Saves a single image slice as PNG."""
+        path = os.path.join(self.output_folder, "images", f"{example_id}_{index}.png")
+        plt.imsave(path, slice_data, cmap="gray")
+    
+    def _save_npy(self, slice_data, example_id, index):
+        """Saves a single slice as an NPY file."""
+        path = os.path.join(self.output_folder, "npy", f"{example_id}_{index}.npy")
+        np.save(path, slice_data)
+    
+    def show_sample(self, image_name=None, num_images=1):
+        """
+        Displays one or more flair images with their corresponding masks.
+        If image_name is provided, it will display the slices of that image, otherwise it will display num_images random images.
+        """
+        path = os.path.join(self.output_folder, "images")
+        
+        images = os.listdir(path)
+        if not images:
+            print("No images found in the dataset.")
+            return
+        
+        if image_name is None:
+            selected_images = np.random.choice(images, size=min(num_images, len(images)), replace=False)
+        else:
+            # image name is something like "123"
+            # images_names should be something like ["123_0.png", "123_1.png", ...] until the last slice of the image
+            images_names = [f"{image_name}_{i}.png" for i in range(self.slices_per_example)]
+            selected_images = [img_name for img_name in images_names if img_name in images]
+            if not selected_images:
+                print("No matching image slices found in the dataset. \n Image name should be in the following format: 'sub-CC110033' where sub-CC110033 is the example number and it should be in the dataset.")   
+                return
+
+        for img_name in selected_images:
+            flair_img = plt.imread(os.path.join(path, img_name))
+            
+            plt.figure(figsize=(10, 10))
+            plt.imshow(flair_img, cmap="gray")
+            plt.axis("off")
+            plt.show()
+
+
 # Custom dataset
 class MRIDataset(Dataset):
     def __init__(self, data_dir, transform=None, latents=False, RGB=False):
