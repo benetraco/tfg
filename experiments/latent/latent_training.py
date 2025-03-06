@@ -284,6 +284,13 @@ def main():
                     with torch.no_grad(): # predict the noise residual with the unet
                         noise_pred = model(latent_inf, t).sample
                     latent_inf = noise_scheduler.step(noise_pred, t, latent_inf).prev_sample # compute the previous noisy sample x_t -> x_t-1
+                # save the four latent channels as a .npy
+                # create dir latent_log if not exists
+                if not os.path.exists('latent_log'):
+                    os.makedirs('latent_log')
+                for b in range(config['logging']['images']['batch_size']):
+                    for i in range(4):
+                        np.save(f'latent_log/latent_{b}_{i}.npy', latent_inf[b,i].cpu().numpy())
                 # log images
                 if config['logging']['logger_name'] == 'wandb':
                     for i in range (4): # log the 4 latent channels
