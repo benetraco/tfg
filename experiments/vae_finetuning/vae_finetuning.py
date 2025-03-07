@@ -88,7 +88,7 @@ def main():
     )
 
     # Create dataset with the defined transformations
-    dataset = MRIDataset(data_dir, transform=preprocess, latents=True) # create the dataset
+    dataset = MRIDataset(data_dir, transform=preprocess, RGB=True) # create the dataset
     logger.info(f"Dataset loaded with {len(dataset)} images") # show info about the dataset
     # Create the dataloader
     train_dataloader = DataLoader(

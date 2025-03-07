@@ -259,7 +259,7 @@ class MRIDataset(Dataset):
     
 
 class LatentImageProcessor:
-    def __init__(self, repo_path, input_dir = "/home/benet/data/VH2D/images/flair", output_dir = "/home/benet/data/VH2D/latent_flair", resolution = 256): 
+    def __init__(self, repo_path, input_dir = "/home/benet/data/VH2D/images/flair", output_dir = "/home/benet/data/VH2D/latent_flair", resolution = 256, finetuned_vae = True): 
         self.repo_path = repo_path
         self.resolution = resolution
         
@@ -283,8 +283,11 @@ class LatentImageProcessor:
         print(f"Device: {self.device}")
 
         # Load VAE model
-        pipeline_dir = self.repo_path / 'results/pipelines' / 'fintuned_vae'
-        self.vae = AutoencoderKL.from_pretrained(pipeline_dir)
+        if finetuned_vae:
+            pipeline_dir = self.repo_path / 'results/pipelines' / 'fintuned_vae'
+            self.vae = AutoencoderKL.from_pretrained(pipeline_dir)
+        else:
+            self.vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae")
         self.vae.to(self.device).eval()
 
     def process_images(self):
@@ -308,7 +311,9 @@ class LatentImageProcessor:
                 for j in range(4):
                     np.save(self.output_dir / f"{image_file}_{j}.npy", latent[j])
             
-            print(f"Latent images saved in {self.output_dir}")
+            # count how many latent images were saved
+            latent_files = [f for f in os.listdir(self.output_dir) if f.endswith(".npy")]
+            print(f"{len(latent_files)} latent images saved in {self.output_dir}")
 
 
 
