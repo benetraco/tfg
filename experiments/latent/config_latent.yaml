@@ -3,15 +3,15 @@
 # 1. Image processing
 processing:
   # dataset name
-  # dataset: "/home/benet/data/VH2D/images/latent_flair" # name of the dataset or directory in repo
-  dataset: "/home/benet/data/VH2D/latent_flair" # name of the dataset or directory in repo
+  # dataset: "/home/benet/data/VH2D/latent_flair" # name of the dataset or directory in repo
+  dataset: "/home/benet/data/Healthy2D/CamCAN/latent"
   # image size
   resolution: 32
   # interpolation: "BILINEAR"
   # # normalisation
   # normalisation_value: 4095.0
   # batch size for dataloader
-  batch_size: 4
+  batch_size: 32
   # number of workers for dataloader
   num_workers: 12 # 0 means no extra processes are used (run in main process)
 
@@ -46,7 +46,7 @@ model:
 training:
   num_epochs: 50 # Number of epochs to train for
   gradient_accumulation:
-    steps: 4 # Number of gradient accumulation steps
+    steps: 1 # Number of gradient accumulation steps
   mixed_precision:
     type: 'no' # Type of mixed precision to use
   gradient_clip:
@@ -60,7 +60,7 @@ training:
     eps: 1.0e-8
   lr_scheduler:
     name: "cosine"
-    num_warmup_steps: 0
+    num_warmup_steps: 500
   noise_scheduler:
     num_train_timesteps: 1000
     beta_schedule: "linear" # originally using "squaredcos_cap_v2", 
