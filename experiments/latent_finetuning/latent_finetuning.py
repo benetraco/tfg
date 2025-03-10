@@ -22,23 +22,18 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from torchvision.transforms import (
     Compose,
-    Resize,
-    CenterCrop,
     ToTensor,
-    Normalize,
-    InterpolationMode,
 )
 import wandb
 import datasets, diffusers
 from diffusers import (
-    UNet2DModel,
     DDPMScheduler,
+    DDIMScheduler,
 )   
 from diffusers import DDPMPipeline, AutoencoderKL, DiffusionPipeline
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version
 from diffusers.utils.import_utils import is_xformers_available
-from transformers import CLIPTokenizer, CLIPTextModel
 import logging
 from accelerate.logging import get_logger
 from accelerate import Accelerator
@@ -73,7 +68,7 @@ def main():
         gradient_accumulation_steps=config['training']['gradient_accumulation']['steps'],
         mixed_precision=config['training']['mixed_precision']['type'],
         log_with= config['logging']['logger_name'],
-        cpu=True,
+        # cpu=True,
     )
 
     # define basic logging configuration
@@ -116,26 +111,17 @@ def main():
     ### 2. Model definition
     # Load the VAE model
     # vae = AutoencoderKL.from_pretrained(repo_path / config['saving']['local']['outputs_dir'] / config['saving']['local']['vae_name'])
-    vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae")
-    vae.eval() # set the model to evaluation mode
+    if config['logging']['log_reconstructions']:
+        vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae")
+        vae.eval() # set the model to evaluation mode
 
-    # Load the diffusion model
-    ldm = DiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4")
+    # Load the embeddings
+    ldm = DiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4") #, variant="fp16", torch_dtype=torch.float16)
     model = ldm.unet.to(accelerator.device)
-
-    if config['model']['prompt'] is not None:
-        # Encode prompt properly
-        prompt = [config['model']['prompt']] * config['processing']['batch_size']
-    else:
-        # Make sure the text embeddings are None but in the format (batch_size, num_tokens, hidden_size)
-        prompt = [""] * config['processing']['batch_size']
-        
-    tokenizer = ldm.tokenizer
-    text_encoder = ldm.text_encoder.to("cpu")
-
-    # Load tokenizer and text encoder and encode prompt
-    text_inputs = tokenizer(prompt, padding="max_length", max_length=77, return_tensors="pt").to("cpu")
-    text_embeddings = text_encoder(**text_inputs).last_hidden_state
+    
+    # Load the embeddings
+    name = config['text_promt']['embedding_name']
+    text_embeddings = torch.load(exp_path / 'text_embeddings' / f'{name}.pt')
     print(text_embeddings.shape)
 
     # memory efficient attention for model
@@ -175,12 +161,18 @@ def main():
         num_warmup_steps= config['training']['lr_scheduler']['num_warmup_steps'], #* config['training']['gradient_accumulation']['steps'],
         num_training_steps= max_train_steps, 
     )
-    noise_scheduler = DDPMScheduler(
-        beta_start=config['training']['noise_scheduler']['beta_start'],
-        beta_end=config['training']['noise_scheduler']['beta_end'],
-        num_train_timesteps=config['training']['noise_scheduler']['num_train_timesteps'],
-        beta_schedule=config['training']['noise_scheduler']['beta_schedule'],
-    )
+    if config['training']['noise_scheduler']['type'] == 'DDPM':
+        noise_scheduler = DDPMScheduler(
+            beta_start=config['training']['noise_scheduler']['beta_start'],
+            beta_end=config['training']['noise_scheduler']['beta_end'],
+            num_train_timesteps=config['training']['noise_scheduler']['num_train_timesteps'],
+            beta_schedule=config['training']['noise_scheduler']['beta_schedule'],
+        )
+    elif config['training']['noise_scheduler']['type'] == 'DDIM':
+        noise_scheduler = DDIMScheduler(
+            num_train_timesteps=config['training']['noise_scheduler']['num_train_timesteps'],
+            beta_schedule=config['training']['noise_scheduler']['beta_schedule'],
+        )
 
     # prepare with the accelerator
     model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
@@ -213,18 +205,19 @@ def main():
     logger.info(f'The number of warmup steps is: {config["training"]["lr_scheduler"]["num_warmup_steps"]}\n')
 
     # prompt info
-    logger.info(f'The prompt is: {config["model"]["prompt"]}\n')
+    logger.info(f'The prompt is: {config["text_promt"]["prompt"]}\n')
     # global variables
     global_step = 0
 
     #### 3.2 Training loop
+    model.enable_gradient_checkpointing() # enable gradient checkpointing for memory efficiency
     for epoch in range(num_epochs): # Loop over the epochs
         model.train()
         train_loss = [] # accumulated loss list
         pbar = tqdm(total=num_update_steps_per_epoch)
         pbar.set_description(f"Epoch {epoch}")
         for latents in train_dataloader: # Loop over the batches
-
+            torch.cuda.empty_cache() # empty the cache to avoid memory leaks
             with accelerator.accumulate(model): # start gradient accumulation
                 noise = torch.randn_like(latents) # Sample noise to add to the images
                 bs = latents.shape[0] # batch size variable for later use
@@ -248,7 +241,7 @@ def main():
                 train_loss.append(avg_loss.item())
                 
                 # Backpropagate the loss
-                accelerator.backward(loss) #loss is used as a gradient, coming from the accumulation of the gradients of the loss function
+                accelerator.backward(loss, retain_graph=True) #loss is used as a gradient, coming from the accumulation of the gradients of the loss function
                 if accelerator.sync_gradients: # gradient clipping
                     accelerator.clip_grad_norm_(model.parameters(), config['training']['gradient_clip']['max_norm'])
                 # Update
@@ -285,7 +278,7 @@ def main():
             if epoch % config['logging']['images']['freq_epochs'] == 0 or epoch == num_epochs - 1: # if in image saving epoch or last one
                 # create random noise
                 latent_inf = torch.randn( # Use seed to denoise always the same images
-                    config['logging']['images']['batch_size'], config['model']['in_channels'],
+                    config['logging']['images']['batch_size'], config['text_promt']['in_channels'],
                     config['processing']['resolution'], config['processing']['resolution'],
                     generator=torch.manual_seed(17844)
                 ).to(accelerator.device)
@@ -310,14 +303,15 @@ def main():
                             {f"latent_{i}": [wandb.Image(latent_inf[b,i], mode='F') for b in range(config['logging']['images']['batch_size'])]},
                             step=global_step,
                         )
-                    # log the decoded images
-                    latent_inf = latent_inf.to('cpu')
-                    reconstructed = vae.decode(latent_inf).sample
-                    # print(reconstructed.shape)
-                    accelerator.get_tracker('wandb').log(
-                        {"reconstructed": [wandb.Image(reconstructed[b][0], mode='F') for b in range(config['logging']['images']['batch_size'])]},
-                        step=global_step,
-                    )
+                    if config['logging']['log_reconstructions']:
+                        # log the decoded images
+                        latent_inf = latent_inf.to('cpu')
+                        reconstructed = vae.decode(latent_inf).sample
+                        # print(reconstructed.shape)
+                        accelerator.get_tracker('wandb').log(
+                            {"reconstructed": [wandb.Image(reconstructed[b][0], mode='F') for b in range(config['logging']['images']['batch_size'])]},
+                            step=global_step,
+                        )
             # save model
             if epoch % config['saving']['local']['saving_frequency'] == 0 or epoch == num_epochs - 1: # if in model saving epoch or last one
                 # create pipeline # unwrap the model

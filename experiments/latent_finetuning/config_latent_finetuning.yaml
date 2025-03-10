@@ -1,5 +1,5 @@
 # configuration file for the unconditional training
-
+# tmux: tmux new -s latent_finetuning
 # 1. Image processing
 processing:
   # dataset name
@@ -11,25 +11,26 @@ processing:
   # # normalisation
   # normalisation_value: 4095.0
   # batch size for dataloader
-  batch_size: 32
+  batch_size: 1
   # number of workers for dataloader
-  num_workers: 12 # 0 means no extra processes are used (run in main process)
+  num_workers: 4 # 0 means no extra processes are used (run in main process)
 
 # 2. Model
-model:
+text_promt:
   # prompt: "A brain MRI scan of a healthy individual" # Prompt for the model
   prompt: # if empty, no prompt is used
+  embedding_name: "empty_prompt" # Name of the embedding
 
 # 3. Training
 training:
   num_epochs: 50 # Number of epochs to train for
   gradient_accumulation:
-    steps: 1 # Number of gradient accumulation steps
+    steps: 16 # Number of gradient accumulation steps
   mixed_precision:
-    type: 'no' # Type of mixed precision to use
+    type: 'fp16' # Type of mixed precision to use
   gradient_clip:
     max_norm: 1.0 # Maximum norm for gradient clipping
-  enable_xformers_memory_efficient_attention: False
+  enable_xformers_memory_efficient_attention: True
   optimizer:
     learning_rate: 1.0e-4 # Learning rate for the optimizer
     beta_1: 0.95 # Beta 1 for the AdamW optimizer
@@ -40,8 +41,9 @@ training:
     name: "cosine"
     num_warmup_steps: 500
   noise_scheduler:
-    num_train_timesteps: 1000
-    beta_schedule: "linear" # originally using "squaredcos_cap_v2", 
+    type: "DDIM" # Type of noise scheduler to use, options: "DDIM" or "DDPM"
+    num_train_timesteps: 50 #1000
+    beta_schedule: "scaled_linear" #"linear" # originally using "squaredcos_cap_v2", 
     beta_start: 0.0001 # default 0.0001
     beta_end: 0.02 # default 0.02
 
@@ -63,3 +65,4 @@ logging:
   images:
     freq_epochs: 5 # How often to save images (in epochs)
     batch_size: 4 # Batch size for image generation
+  log_reconstructions: False # Whether to log reconstructions
