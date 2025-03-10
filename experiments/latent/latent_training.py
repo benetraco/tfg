@@ -202,6 +202,9 @@ def main():
     logger.info(f'The learning rate scheduler is: {config["training"]["lr_scheduler"]["name"]}\n')
     logger.info(f'The number of warmup steps is: {config["training"]["lr_scheduler"]["num_warmup_steps"]}\n')
 
+    # noise scheduler info
+    logger.info(f'The beta schedule is: {config["training"]["noise_scheduler"]["beta_schedule"]}\n')
+
     # global variables
     global_step = 0
 
