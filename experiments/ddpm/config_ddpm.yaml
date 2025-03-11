@@ -1,16 +1,16 @@
 # configuration file for the unconditional training
-# tmux session: ddpm128healthy
+# tmux session: ddpm256att and ddpm256
 
 # 1. Image processing
 processing:
   # dataset name
-  # dataset: "/home/benet/data/VH2D/images/flair" # name of the dataset or directory in repo
-  dataset: "/home/benet/data/Healthy2D/CamCAN/images"
+  dataset: "/home/benet/data/VH2D/images/flair" # name of the dataset or directory in repo
+  # dataset: "/home/benet/data/Healthy2D/CamCAN/images"
   # image size or resolution to resize
-  resolution: 128
+  resolution: 256
   interpolation: "BILINEAR"
   # batch size for dataloader
-  batch_size: 16
+  batch_size: 4
   # number of workers for dataloader
   num_workers: 8 # 0 means no extra processes are used (run in main process)
 
@@ -32,9 +32,9 @@ model:
   - "DownBlock2D"
   - "DownBlock2D"
   - "AttnDownBlock2D"  # a ResNet downsampling block with spatial self-attention
-  - "AttnDownBlock2D" # originaly a attention block, changed to a regular block, considr using attention block
+  - "DownBlock2D" # originaly a attention block, changed to a regular block, considr using attention block
   up_block_types: !!python/tuple # Describes the type of block to use for upsampling
-  - "AttnUpBlock2D"
+  - "UpBlock2D"
   - "AttnUpBlock2D"  # a ResNet upsampling block with spatial self-attention
   - "UpBlock2D"
   - "UpBlock2D"  # a regular ResNet upsampling block
@@ -45,7 +45,7 @@ model:
 training:
   num_epochs: 50 # Number of epochs to train for
   gradient_accumulation:
-    steps: 2 # Number of gradient accumulation steps, change to 2 if bs is 8 and 4 if bs is 4
+    steps: 8 # Number of gradient accumulation steps, change to 2 if bs is 8 and 4 if bs is 4
   mixed_precision:
     type: 'no'
   gradient_clip:

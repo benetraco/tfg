@@ -49,6 +49,9 @@ check_min_version("0.15.0.dev0")
 # set the logger
 logger = get_logger(__name__, log_level="INFO") # allow from info level and above
 
+# set cuda device
+torch.cuda.set_device(1)
+
 ######MAIN######
 def main():
 
@@ -167,6 +170,8 @@ def main():
     logger.info(f'The model has {model.num_parameters()} parameters.\n')
     logger.info(f'The learning rate scheduler is: {config["training"]["lr_scheduler"]["name"]}\n')
     logger.info(f'The number of warmup steps is: {config["training"]["lr_scheduler"]["num_warmup_steps"]}\n')
+    # print last layer of the model which type is it
+    logger.info(f'The last layer of the model is: {config["model"]["down_block_types"][-1]} & {config["model"]["down_block_types"][-1]}\n')
 
 
     # global variables (mainly useful for checkpointing)
