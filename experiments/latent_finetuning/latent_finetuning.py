@@ -44,12 +44,27 @@ from packaging import version
 # import the MRIDataset class from the dataset folder
 from dataset.build_dataset import MRIDataset
 
-
 # Check the diffusers version
 check_min_version("0.15.0.dev0")
 
 # set the logger
 logger = get_logger(__name__, log_level="INFO") # allow from info level and above
+
+# set cuda device
+torch.cuda.set_device(0)
+
+def get_embeddings(prompt, ldm):
+    """
+    Function to get the text embeddings from the prompt
+    """
+    tokenizer = ldm.tokenizer
+    text_encoder = ldm.text_encoder
+
+    # Load tokenizer and text encoder and encode prompt
+    text_inputs = tokenizer(prompt, padding="max_length", max_length=77, return_tensors="pt")
+    text_embeddings = text_encoder(**text_inputs).last_hidden_state
+    return text_embeddings
+
 
 ######MAIN######
 def main():
@@ -120,9 +135,8 @@ def main():
     model = ldm.unet.to(accelerator.device)
     
     # Load the embeddings
-    name = config['text_promt']['embedding_name']
-    text_embeddings = torch.load(exp_path / 'text_embeddings' / f'{name}.pt')
-    print(text_embeddings.shape)
+    text_embeddings = get_embeddings(config['prompt'], ldm)
+    text_embeddings = text_embeddings.to(accelerator.device)
 
     # memory efficient attention for model
     if config['training']['enable_xformers_memory_efficient_attention']:
@@ -173,6 +187,8 @@ def main():
             num_train_timesteps=config['training']['noise_scheduler']['num_train_timesteps'],
             beta_schedule=config['training']['noise_scheduler']['beta_schedule'],
         )
+    else:
+        raise ValueError("Noise scheduler type not recognized. Please choose between 'DDPM' and 'DDIM'.")
 
     # prepare with the accelerator
     model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
@@ -205,7 +221,7 @@ def main():
     logger.info(f'The number of warmup steps is: {config["training"]["lr_scheduler"]["num_warmup_steps"]}\n')
 
     # prompt info
-    logger.info(f'The prompt is: {config["text_promt"]["prompt"]}\n')
+    logger.info(f'The prompt is: {config["prompt"]}\n')
     # global variables
     global_step = 0
 
@@ -224,14 +240,14 @@ def main():
                 # Sample a random timestep for each image
                 timesteps = torch.randint( #create bs random integers from init=0 to end=timesteps, and send them to device (3rd thing in device)
                     low= 0,
-                    high= noise_scheduler.num_train_timesteps,
+                    high= noise_scheduler.config.num_train_timesteps,
                     size= (bs,),
                     device=latents.device ,
                 ).long() #int64
                 # Forward diffusion process: add noise to the clean images according to the noise magnitude at each timestep
                 noisy_images = noise_scheduler.add_noise(latents, noise, timesteps)
                 # Get the model prediction, #### This part changes according to the prediction type (e.g. epsilon, sample, etc.)
-                noise_pred = model(noisy_images, timesteps, encoder_hidden_states=text_embeddings).sample # sample tensor
+                noise_pred = model(noisy_images, timesteps, encoder_hidden_states=text_embeddings.expand(bs, -1, -1)).sample # sample tensor
                 # Calculate the loss
                 loss = F.mse_loss(noise_pred.float(), noise.float(), reduction='mean')
                 
@@ -277,8 +293,9 @@ def main():
         if accelerator.is_main_process: # only main process saves the model
             if epoch % config['logging']['images']['freq_epochs'] == 0 or epoch == num_epochs - 1: # if in image saving epoch or last one
                 # create random noise
+                log_bs = config['logging']['images']['batch_size'] # batch size for logging
                 latent_inf = torch.randn( # Use seed to denoise always the same images
-                    config['logging']['images']['batch_size'], config['text_promt']['in_channels'],
+                    log_bs, 4, # 4 latent channels
                     config['processing']['resolution'], config['processing']['resolution'],
                     generator=torch.manual_seed(17844)
                 ).to(accelerator.device)
@@ -287,20 +304,20 @@ def main():
                 for t in tqdm(noise_scheduler.timesteps): # markov chain
                     latent_inf = noise_scheduler.scale_model_input(latent_inf, t) # # Apply scaling, no change in vanilla case
                     with torch.no_grad(): # predict the noise residual with the unet
-                        noise_pred = model(latent_inf, t).sample
+                        noise_pred = model(latent_inf, t, encoder_hidden_states=text_embeddings.expand(log_bs, -1, -1)).sample
                     latent_inf = noise_scheduler.step(noise_pred, t, latent_inf).prev_sample # compute the previous noisy sample x_t -> x_t-1
                 # save the four latent channels as a .npy
                 # create dir latent_log if not exists
                 if not os.path.exists('latent_log'):
                     os.makedirs('latent_log')
-                for b in range(config['logging']['images']['batch_size']):
+                for b in range(log_bs):
                     for i in range(4):
                         np.save(f'latent_log/latent_{b}_{i}.npy', latent_inf[b,i].cpu().numpy())
                 # log images
                 if config['logging']['logger_name'] == 'wandb':
                     for i in range (4): # log the 4 latent channels
                         accelerator.get_tracker('wandb').log(
-                            {f"latent_{i}": [wandb.Image(latent_inf[b,i], mode='F') for b in range(config['logging']['images']['batch_size'])]},
+                            {f"latent_{i}": [wandb.Image(latent_inf[b,i], mode='F') for b in range(log_bs)]},
                             step=global_step,
                         )
                     if config['logging']['log_reconstructions']:
@@ -309,7 +326,7 @@ def main():
                         reconstructed = vae.decode(latent_inf).sample
                         # print(reconstructed.shape)
                         accelerator.get_tracker('wandb').log(
-                            {"reconstructed": [wandb.Image(reconstructed[b][0], mode='F') for b in range(config['logging']['images']['batch_size'])]},
+                            {"reconstructed": [wandb.Image(reconstructed[b][0], mode='F') for b in range(log_bs)]},
                             step=global_step,
                         )
             # save model

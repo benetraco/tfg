@@ -3,34 +3,31 @@
 # 1. Image processing
 processing:
   # dataset name
-  # dataset: "/home/benet/data/VH2D/latent_flair" # name of the dataset or directory in repo
-  dataset: "/home/benet/data/Healthy2D/CamCAN/latent"
+  dataset: "/home/benet/data/VH2D/latent_flair" # name of the dataset or directory in repo
+  # dataset: "/home/benet/data/Healthy2D/CamCAN/latent"
   # image size
   resolution: 32
   # interpolation: "BILINEAR"
   # # normalisation
   # normalisation_value: 4095.0
   # batch size for dataloader
-  batch_size: 1
+  batch_size: 16
   # number of workers for dataloader
   num_workers: 4 # 0 means no extra processes are used (run in main process)
 
-# 2. Model
-text_promt:
-  # prompt: "A brain MRI scan of a healthy individual" # Prompt for the model
-  prompt: # if empty, no prompt is used
-  embedding_name: "empty_prompt" # Name of the embedding
+# 2. Prompt
+prompt: ""
 
 # 3. Training
 training:
   num_epochs: 50 # Number of epochs to train for
   gradient_accumulation:
-    steps: 16 # Number of gradient accumulation steps
+    steps: 2 # Number of gradient accumulation steps
   mixed_precision:
-    type: 'fp16' # Type of mixed precision to use
+    type: 'no' # Type of mixed precision to use
   gradient_clip:
     max_norm: 1.0 # Maximum norm for gradient clipping
-  enable_xformers_memory_efficient_attention: True
+  enable_xformers_memory_efficient_attention: False
   optimizer:
     learning_rate: 1.0e-4 # Learning rate for the optimizer
     beta_1: 0.95 # Beta 1 for the AdamW optimizer
@@ -41,7 +38,7 @@ training:
     name: "cosine"
     num_warmup_steps: 500
   noise_scheduler:
-    type: "DDIM" # Type of noise scheduler to use, options: "DDIM" or "DDPM"
+    type: "DDPM" # Type of noise scheduler to use, options: "DDIM" or "DDPM"
     num_train_timesteps: 50 #1000
     beta_schedule: "scaled_linear" #"linear" # originally using "squaredcos_cap_v2", 
     beta_start: 0.0001 # default 0.0001
@@ -65,4 +62,4 @@ logging:
   images:
     freq_epochs: 5 # How often to save images (in epochs)
     batch_size: 4 # Batch size for image generation
-  log_reconstructions: False # Whether to log reconstructions
+  log_reconstructions: True # Whether to log reconstructions
