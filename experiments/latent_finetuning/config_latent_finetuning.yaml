@@ -3,8 +3,8 @@
 # 1. Image processing
 processing:
   # dataset name
-  dataset: "/home/benet/data/VH2D/latent_flair" # name of the dataset or directory in repo
-  # dataset: "/home/benet/data/Healthy2D/CamCAN/latent"
+  # dataset: "/home/benet/data/VH2D/latent_flair" # name of the dataset or directory in repo
+  dataset: "/home/benet/data/Healthy2D/CamCAN/latent"
   # image size
   resolution: 32
   # interpolation: "BILINEAR"
@@ -16,7 +16,10 @@ processing:
   num_workers: 4 # 0 means no extra processes are used (run in main process)
 
 # 2. Prompt
-prompt: ""
+# prompt: ""
+# prompt: "Axial FLAIR MRI scan of the human brain" # Prompt for the model
+# prompt: "A high-resolution axial FLAIR MRI scan of the human brain, showing clear white matter hyperintensities, detailed ventricles, and cortical structures. The image is grayscale with well-defined contrast between cerebrospinal fluid, gray matter, and white matter. No artifacts, clear and medically accurate."
+prompt: "Axial T1 MRI scan of the human brain" # Prompt for the model
 
 # 3. Training
 training:
@@ -39,7 +42,7 @@ training:
     num_warmup_steps: 500
   noise_scheduler:
     type: "DDPM" # Type of noise scheduler to use, options: "DDIM" or "DDPM"
-    num_train_timesteps: 50 #1000
+    num_train_timesteps: 1000
     beta_schedule: "scaled_linear" #"linear" # originally using "squaredcos_cap_v2", 
     beta_start: 0.0001 # default 0.0001
     beta_end: 0.02 # default 0.02
