@@ -16,7 +16,7 @@ from diffusers.utils import check_min_version
 import logging
 from accelerate.logging import get_logger
 from accelerate import Accelerator
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 from dataset.build_dataset import MRIDataset
 
 check_min_version("0.15.0.dev0")
@@ -284,9 +284,21 @@ class LatentFineTuning:
                     bs = latents.shape[0]
                     timesteps = torch.randint(0, self.noise_scheduler.config.num_train_timesteps, (bs,), device=latents.device).long()
                     
+
+                    # **Randomly use empty prompt embeddings for a portion of the batch**
+                    use_uncond = torch.rand(bs) < 0.1  # 10% of the batch uses unconditional embeddings
+                    text_embeddings_batch = []
+                    for i in range(bs):
+                        if use_uncond[i]: 
+                            text_embeddings_batch.append(self._get_embeddings("", self.ldm))  # Empty prompt
+                        else:
+                            text_embeddings_batch.append(self.text_embeddings)  # Normal prompt
+                    
+                    text_embeddings_batch = torch.stack(text_embeddings_batch).to(self.accelerator.device)
+
                     # Forward pass
                     noisy_images = self.noise_scheduler.add_noise(latents, noise, timesteps)
-                    noise_pred = self.model(noisy_images, timesteps, encoder_hidden_states=self.text_embeddings.expand(bs, -1, -1)).sample
+                    noise_pred = self.model(noisy_images, timesteps, encoder_hidden_states=text_embeddings_batch.expand(bs, -1, -1)).sample
                     loss = F.mse_loss(noise_pred.float(), noise.float(), reduction='mean')
                     
                     # Logging
