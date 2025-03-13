@@ -23,7 +23,7 @@ check_min_version("0.15.0.dev0")
 logger = get_logger(__name__, log_level="INFO")
 
 # Restrict PyTorch to use only GPU 2
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 # Set the device to 0 (because it's now the only visible device)
 torch.cuda.set_device(0)
@@ -148,6 +148,7 @@ class LatentFineTuning:
                 num_train_timesteps=self.config['training']['noise_scheduler']['num_train_timesteps'],
                 beta_schedule=self.config['training']['noise_scheduler']['beta_schedule'],
             )
+            noise_scheduler.set_timesteps(self.config['training']['noise_scheduler']['num_inference_timesteps'])
         else:
             raise ValueError("Noise scheduler type not recognized. Please choose between 'DDPM' and 'DDIM'.")
         return optimizer, lr_scheduler, noise_scheduler, num_update_steps_per_epoch
@@ -286,19 +287,21 @@ class LatentFineTuning:
                     
 
                     # **Randomly use empty prompt embeddings for a portion of the batch**
-                    use_uncond = torch.rand(bs) < 0.1  # 10% of the batch uses unconditional embeddings
-                    text_embeddings_batch = []
-                    for i in range(bs):
-                        if use_uncond[i]: 
-                            text_embeddings_batch.append(self._get_embeddings("", self.ldm))  # Empty prompt
-                        else:
-                            text_embeddings_batch.append(self.text_embeddings)  # Normal prompt
+                    # use_uncond = torch.rand(bs) < 0.1  # 10% of the batch uses unconditional embeddings
+                    # text_embeddings_batch = []
+                    # for i in range(bs):
+                    #     if use_uncond[i]: 
+                    #         text_embeddings_batch.append(self._get_embeddings("", self.ldm))  # Empty prompt
+                    #     else:
+                    #         text_embeddings_batch.append(self.text_embeddings)  # Normal prompt
                     
-                    text_embeddings_batch = torch.stack(text_embeddings_batch).to(self.accelerator.device)
+                    # text_embeddings_batch = [t.to(self.accelerator.device) for t in text_embeddings_batch]
+                    # text_embeddings_batch = torch.stack(text_embeddings_batch).squeeze(1)
 
                     # Forward pass
                     noisy_images = self.noise_scheduler.add_noise(latents, noise, timesteps)
-                    noise_pred = self.model(noisy_images, timesteps, encoder_hidden_states=text_embeddings_batch.expand(bs, -1, -1)).sample
+                    # noise_pred = self.model(noisy_images, timesteps, encoder_hidden_states=text_embeddings_batch.expand(bs, -1, -1)).sample
+                    noise_pred = self.model(noisy_images, timesteps, encoder_hidden_states=self.text_embeddings.expand(bs, -1, -1)).sample
                     loss = F.mse_loss(noise_pred.float(), noise.float(), reduction='mean')
                     
                     # Logging
