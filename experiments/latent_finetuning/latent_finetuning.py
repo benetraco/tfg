@@ -205,8 +205,10 @@ class LatentFineTuning:
                 )
             if self.config['logging']['log_reconstructions']:
                 # log the decoded images
+                if self.config['logging']['images']['scaled']:
+                    latent_inf /= self.vae.config.scaling_factor
                 reconstructed = self.vae.decode(latent_inf).sample
-                # print(reconstructed.shape)
+                # reconstructed = vae.decode(latent_inf, return_dist=False)[0]
                 self.accelerator.get_tracker('wandb').log(
                     {"reconstructed": [wandb.Image(reconstructed[b][0], mode='F') for b in range(log_bs)]},
                     step=self.global_step,
@@ -238,7 +240,10 @@ class LatentFineTuning:
                 latent_guided = self.noise_scheduler.step(noise_pred, t, latent_guided).prev_sample
 
             # Decode & Move to CPU to free GPU memory
+            if self.config['logging']['images']['scaled']:
+                latent_guided /= self.vae.config.scaling_factor
             reconstructed = self.vae.decode(latent_guided).sample.cpu()  
+            # reconstructed = vae.decode(latent_guided, return_dist=False)[0]
 
             # Log images in WandB
             if self.config['logging']['logger_name'] == 'wandb':

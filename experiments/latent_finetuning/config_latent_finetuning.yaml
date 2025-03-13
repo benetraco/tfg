@@ -66,5 +66,6 @@ logging:
   images:
     freq_epochs: 5 # How often to save images (in epochs)
     batch_size: 4 # Batch size for image generation
+    scaled: True # Whether to scale the images
   log_reconstructions: True # Whether to log reconstructions
   guidance: True # Whether to log guidance
