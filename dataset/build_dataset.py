@@ -259,9 +259,11 @@ class MRIDataset(Dataset):
     
 
 class LatentImageProcessor:
-    def __init__(self, repo_path, input_dir = "/home/benet/data/VH2D/images/flair", output_dir = "/home/benet/data/VH2D/latent_flair", resolution = 256, finetuned_vae = True): 
+    def __init__(self, repo_path, input_dir = "/home/benet/data/VH2D/images/flair", output_dir = "/home/benet/data/VH2D/latent_flair",
+                  resolution = 256, finetuned_vae = True, scale = False):
         self.repo_path = repo_path
         self.resolution = resolution
+        self.scale = scale
         
         # Dataset and Latent Directory Setup
         self.input_dir = input_dir
@@ -304,7 +306,11 @@ class LatentImageProcessor:
                 image = Image.open(img_path).convert("RGB")
 
                 image = self.preprocess(image).unsqueeze(0).to(self.device)
-                latent = self.vae.encode(image).latent_dist.sample().squeeze(0)
+
+                latent = self.vae.encode(image).latent_dist.sample()
+                if self.scale:
+                    latent *= self.vae.config.scaling_factor
+                latent = latent.squeeze(0)
                 
                 # Save the latent images
                 latent = latent.cpu().numpy()

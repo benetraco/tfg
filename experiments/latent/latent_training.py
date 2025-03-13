@@ -222,9 +222,9 @@ def main():
                 # Sample a random timestep for each image
                 timesteps = torch.randint( #create bs random integers from init=0 to end=timesteps, and send them to device (3rd thing in device)
                     low= 0,
-                    high= noise_scheduler.num_train_timesteps,
+                    high= noise_scheduler.config.num_train_timesteps,
                     size= (bs,),
-                    device=latents.device ,
+                    device=latents.device,
                 ).long() #int64
                 # Forward diffusion process: add noise to the clean images according to the noise magnitude at each timestep
                 noisy_images = noise_scheduler.add_noise(latents, noise, timesteps)
@@ -302,10 +302,11 @@ def main():
                             step=global_step,
                         )
                     # log the decoded images
+                    if config['logging']['images']['scaled']:
+                        latent_inf /= vae.config.scaling_factor
                     latent_inf = latent_inf.to('cpu')
                     reconstructed = vae.decode(latent_inf).sample
-                    print(reconstructed.shape)
-                    # print(reconstructed.shape)
+                    # reconstructed = vae.decode(latent_inf, return_dist=False)[0]
                     accelerator.get_tracker('wandb').log(
                         {"reconstructed": [wandb.Image(reconstructed[b][0], mode='F') for b in range(config['logging']['images']['batch_size'])]},
                         step=global_step,

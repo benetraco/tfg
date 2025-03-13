@@ -3,7 +3,8 @@
 # 1. Image processing
 processing:
   # dataset name
-  dataset: "/home/benet/data/VH2D/latent_flair" # name of the dataset or directory in repo
+  # dataset: "/home/benet/data/VH2D/latent_flair" # name of the dataset or directory in repo
+  dataset: "/home/benet/data/VH2D/latent_flair_scaled"
   # dataset: "/home/benet/data/Healthy2D/CamCAN/latent"
   # image size
   resolution: 32
