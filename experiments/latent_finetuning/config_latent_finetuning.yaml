@@ -3,8 +3,8 @@
 # 1. Image processing
 processing:
   # dataset name
-  # dataset: "/home/benet/data/VH2D/latent_flair" # name of the dataset or directory in repo
-  dataset: "/home/benet/data/Healthy2D/CamCAN/latent"
+  dataset: "/home/benet/data/VH2D/latent_flair" # name of the dataset or directory in repo
+  # dataset: "/home/benet/data/Healthy2D/CamCAN/latent"
   # image size
   resolution: 32
   # interpolation: "BILINEAR"
@@ -17,9 +17,9 @@ processing:
 
 # 2. Prompt
 # prompt: ""
-# prompt: "Axial FLAIR MRI scan of the human brain" # Prompt for the model
+prompt: "Axial FLAIR MRI scan of the human brain" # Prompt for the model
 # prompt: "A high-resolution axial FLAIR MRI scan of the human brain, showing clear white matter hyperintensities, detailed ventricles, and cortical structures. The image is grayscale with well-defined contrast between cerebrospinal fluid, gray matter, and white matter. No artifacts, clear and medically accurate."
-prompt: "Axial T1 MRI scan of the human brain" # Prompt for the model
+# prompt: "Axial T1 MRI scan of the human brain" # Prompt for the model
 
 # 3. Training
 training:
@@ -66,3 +66,4 @@ logging:
     freq_epochs: 5 # How often to save images (in epochs)
     batch_size: 4 # Batch size for image generation
   log_reconstructions: True # Whether to log reconstructions
+  guidance: True # Whether to log guidance

@@ -1,5 +1,6 @@
 from pathlib import Path
 import os, sys
+import gc
 import yaml
 import math
 import numpy as np
@@ -20,7 +21,16 @@ from dataset.build_dataset import MRIDataset
 
 check_min_version("0.15.0.dev0")
 logger = get_logger(__name__, log_level="INFO")
+
+# Restrict PyTorch to use only GPU 2
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
+# Set the device to 0 (because it's now the only visible device)
 torch.cuda.set_device(0)
+
+# Check if CUDA is properly set
+print(torch.cuda.current_device())  # Should print 0
+print(torch.cuda.get_device_name(0))  # Should print "NVIDIA A30"
 
 class LatentFineTuning:
     def __init__(self, config_path):
@@ -204,43 +214,31 @@ class LatentFineTuning:
 
 
     def _save_samples_guidance(self):
-        """Save visual samples with different guidance scales."""
-        log_bs = self.config['logging']['images']['batch_size']  # batch size for logging
-        guidance_values = [1.0, 3.0, 5.0, 7.5, 10.0]  # Different CFG scales to test
+        log_bs = self.config['logging']['images']['batch_size']
+        guidance_values = [1.0, 3.0, 5.0, 7.5, 10.0]
 
-        # Create random noise (fixed seed for reproducibility)
         latent_inf = torch.randn(
-            log_bs * 2, 4,  # 4 latent channels
+            log_bs, 4,  
             self.config['processing']['resolution'], self.config['processing']['resolution'],
             generator=torch.manual_seed(17844)
-        ).to(self.accelerator.device)
-        latent_inf *= self.noise_scheduler.init_noise_sigma  # init noise is 1.0 in vanilla case
+        ).to(self.accelerator.device) * self.noise_scheduler.init_noise_sigma  
 
-        # Unconditional embedding for classifier-free guidance
         uncond_embeddings = self._get_embeddings("", self.ldm).to(self.accelerator.device)
-        text_embeddings = torch.cat([
-            uncond_embeddings.expand(log_bs, -1, -1), 
-            self.text_embeddings.expand(log_bs, -1, -1)
-        ], dim=0)  # Shape: [2 * log_bs, 77, 768]
 
-        # Iterate over different guidance scales
         for guidance_scale in guidance_values:
-            latent_guided = latent_inf.clone()  # Clone initial noise for each guidance scale
-
+            latent_guided = latent_inf.clone()  
             for t in tqdm(self.noise_scheduler.timesteps):
                 latent_guided = self.noise_scheduler.scale_model_input(latent_guided, t)
 
                 with torch.no_grad():
-                    noise_pred_uncond, noise_pred_text = self.model(
-                        latent_guided, t, encoder_hidden_states=text_embeddings
-                    ).sample.chunk(2)
-
+                    noise_pred_uncond = self.model(latent_guided, t, encoder_hidden_states=uncond_embeddings.expand(log_bs, -1, -1)).sample
+                    noise_pred_text = self.model(latent_guided, t, encoder_hidden_states=self.text_embeddings.expand(log_bs, -1, -1)).sample
                     noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 latent_guided = self.noise_scheduler.step(noise_pred, t, latent_guided).prev_sample
 
-            # Decode latents to image space
-            reconstructed = self.vae.decode(latent_guided).sample
+            # Decode & Move to CPU to free GPU memory
+            reconstructed = self.vae.decode(latent_guided).sample.cpu()  
 
             # Log images in WandB
             if self.config['logging']['logger_name'] == 'wandb':
@@ -249,6 +247,11 @@ class LatentFineTuning:
                         [wandb.Image(reconstructed[b][0], mode='F') for b in range(log_bs)]},
                     step=self.global_step,
                 )
+
+            # **Free memory**
+            del latent_guided, reconstructed, noise_pred, noise_pred_uncond, noise_pred_text  
+            torch.cuda.empty_cache()
+            gc.collect()
 
     
     def _save_model(self):
@@ -324,8 +327,10 @@ class LatentFineTuning:
             # Save the model and visual samples
             if self.accelerator.is_main_process:
                 if epoch  % self.config['logging']['images']['freq_epochs'] == 0 or epoch == self.config['training']['num_epochs'] - 1:
-                    # self._save_samples_guidance()
-                    self._save_samples()
+                    if self.config['logging']['guidance']:
+                        self._save_samples_guidance()
+                    else:
+                        self._save_samples()
                     
                 if epoch % self.config['saving']['local']['saving_frequency'] == 0 or epoch == self.config['training']['num_epochs'] - 1:
                     self._save_model()
