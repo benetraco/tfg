@@ -12,7 +12,7 @@ processing:
   # # normalisation
   # normalisation_value: 4095.0
   # batch size for dataloader
-  batch_size: 8
+  batch_size: 16
   # number of workers for dataloader
   num_workers: 4 # 0 means no extra processes are used (run in main process)
 
@@ -26,7 +26,7 @@ prompt: "Axial FLAIR MRI scan of the human brain" # Prompt for the model
 training:
   num_epochs: 50 # Number of epochs to train for
   gradient_accumulation:
-    steps: 4 # Number of gradient accumulation steps
+    steps: 2 # Number of gradient accumulation steps
   mixed_precision:
     type: 'no' # Type of mixed precision to use
   gradient_clip:
@@ -42,12 +42,11 @@ training:
     name: "cosine"
     num_warmup_steps: 500
   noise_scheduler:
-    type: "DDIM" # Type of noise scheduler to use, options: "DDIM" or "DDPM"
+    type: "DDPM" # Type of noise scheduler to use, options: "DDIM" or "DDPM"
     num_train_timesteps: 1000
     beta_schedule: "scaled_linear" #"linear" # originally using "squaredcos_cap_v2", 
     beta_start: 0.0001 # default 0.0001
     beta_end: 0.02 # default 0.02
-    num_inference_timesteps: 250 # only for DDIM
 
 # 4. Saving and logging
 saving:
