@@ -1,0 +1,72 @@
+pretrained_model_name_or_path: "stable-diffusion-v1-5/stable-diffusion-inpainting" # Path to pretrained model or model identifier from huggingface.co/models.
+                              # maybe "sd-legacy/stable-diffusion-inpainting" or "runwayml/stable-diffusion-inpainting" 
+tokenizer_name: "" # Pretrained tokenizer name or path if not the same as model_name.
+
+instance_data_dir: "/home/benet/data/VH2D/images/flair" # A folder containing the training data of instance images.
+
+mask_data_dir: "/home/benet/data/VH2D/images/mask" # A folder containing the training data of mask images.
+
+instance_prompt: "MS lesion in an axial FLAIR MRI brain scan." # The prompt with identifier specifying the instance.
+                # "Axial FLAIR MRI scan of the human brain with an MS lesion."
+output_dir: "lesion-inpating-dreambooth-model" # The output directory where the model predictions and checkpoints will be written.
+
+seed: 17844 # A seed for reproducible training.
+
+resolution: 256 # The resolution for input images.
+
+center_crop: false # Whether to center crop the input images to the resolution.
+
+train_text_encoder: false # Whether to train the text encoder.
+
+train_batch_size: 4 # Batch size (per device) for the training dataloader.
+
+sample_batch_size: 4 # Batch size (per device) for sampling images.
+
+num_train_epochs: 1 # Number of training epochs.
+
+max_train_steps: null # Total number of training steps to perform. If provided, overrides num_train_epochs.
+
+gradient_accumulation_steps: 1 # Number of updates steps to accumulate before performing a backward/update pass.
+
+gradient_checkpointing: false # Whether to use gradient checkpointing to save memory.
+
+learning_rate: 5e-6 # Initial learning rate.
+
+scale_lr: false # Scale the learning rate by number of GPUs, gradient accumulation steps, and batch size.
+
+lr_scheduler: "constant" # The scheduler type to use. Options are "constant", "linear", "cosine"...
+
+lr_warmup_steps: 500 # Number of steps for the warmup in the lr scheduler.
+
+use_8bit_adam: false # Whether to use 8-bit Adam optimizer to save memory.
+
+adam_beta1: 0.9 # The beta1 parameter for the Adam optimizer.
+
+adam_beta2: 0.999 # The beta2 parameter for the Adam optimizer.
+
+adam_weight_decay: 0.01 # Weight decay to use.
+
+adam_epsilon: 1e-8 # Epsilon value for the Adam optimizer.
+
+max_grad_norm: 1.0 # Max gradient norm.
+
+push_to_hub: false # Whether to push the model to the Hub.
+
+hub_token: "" # The token to use to push to the Model Hub.
+
+hub_model_id: "" # The name of the repository to keep in sync with the local `output_dir`.
+
+logging_dir: "logs" # TensorBoard log directory.
+
+mixed_precision: "no" # Whether to use mixed precision (no, fp16, bf16).
+
+local_rank: -1 # For distributed training: local rank.
+
+checkpointing_steps: 500 # Save a checkpoint of the training state every X updates.
+
+checkpoints_total_limit: null # Max number of checkpoints to store.
+
+resume_from_checkpoint: "" # Whether training should be resumed from a previous checkpoint.
+
+
+log_with: "wandb" # The logger to use. Now only "wandb" is supported.
