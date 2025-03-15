@@ -18,11 +18,11 @@ center_crop: false # Whether to center crop the input images to the resolution.
 
 train_text_encoder: false # Whether to train the text encoder.
 
-train_batch_size: 4 # Batch size (per device) for the training dataloader.
+train_batch_size: 8 # Batch size (per device) for the training dataloader.
 
 sample_batch_size: 4 # Batch size (per device) for sampling images.
 
-num_train_epochs: 1 # Number of training epochs.
+num_train_epochs: 50 # Number of training epochs.
 
 max_train_steps: null # Total number of training steps to perform. If provided, overrides num_train_epochs.
 
@@ -70,3 +70,7 @@ resume_from_checkpoint: "" # Whether training should be resumed from a previous 
 
 
 log_with: "wandb" # The logger to use. Now only "wandb" is supported.
+
+val_split: 0.1  # 10% of data for validation
+val_batch_size: 8
+validation_steps: 10  # Log validation every 1000 steps

@@ -4,6 +4,7 @@ import math
 import os
 import logging
 from pathlib import Path
+import wandb
 
 import numpy as np
 import torch
@@ -24,15 +25,62 @@ from diffusers import (
     DDPMScheduler,
     StableDiffusionPipeline,
     UNet2DConditionModel,
+    # DiffusionPipeline,
+    DPMSolverMultistepScheduler,
 )
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version
 
+from sklearn.model_selection import train_test_split
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.13.0.dev0")
 
 logger = get_logger(__name__)
+
+# Restrict PyTorch to use only GPU X
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+# Set the device to 0 (because it's now the only visible device)
+torch.cuda.set_device(0)
+
+def log_validation(global_step, model, vae, val_dataloader, accelerator, args):
+    model.eval()
+    vae.eval()
+    device = accelerator.device
+    transform = transforms.ToPILImage()
+    
+    for i, batch in enumerate(val_dataloader):
+        with torch.no_grad():
+            pixel_values = batch["pixel_values"].to(device)
+            lesion_masks = batch["masks"].to(device)
+            masked_images = batch["masked_images"].to(device)
+            input_ids = batch["input_ids"].to(device)
+
+            # Encode and decode images through VAE
+            latents = vae.encode(masked_images).latent_dist.sample()
+            latents = latents * vae.config.scaling_factor
+
+            # Run the model
+            noise_pred = model(latents, timesteps=torch.tensor([50], device=device), encoder_hidden_states=input_ids).sample
+
+            # Decode output
+            pred_images = vae.decode(noise_pred / vae.config.scaling_factor).sample
+
+        # Log first 8 images
+        if i == 0:
+            images = []
+            for j in range(min(8, pixel_values.shape[0])):
+                images.append(wandb.Image(transform(pixel_values[j].cpu()), caption="GT"))
+                images.append(wandb.Image(transform(masked_images[j].cpu()), caption="Masked"))
+                images.append(wandb.Image(transform(pred_images[j].cpu()), caption="Predicted"))
+                images.append(wandb.Image(transform(lesion_masks[j].cpu()), caption="Mask"))
+
+            wandb.log({"Validation Samples": images, "global_step": global_step})
+
+        if i >= 2:  # Limit validation logging to a few batches
+            break
+
+    model.train()
 
 
 def prepare_mask_and_masked_image(image, mask):
@@ -107,8 +155,8 @@ class MSInpaintingDataset(Dataset):
 
     def __init__(
         self,
-        instance_data_root, 
-        mask_data_root, # Path to lesion masks
+        image_paths, # List of image file paths
+        mask_paths, # List of corresponding mask file paths
         instance_prompt,
         tokenizer,
         size=512,
@@ -118,13 +166,18 @@ class MSInpaintingDataset(Dataset):
         self.center_crop = center_crop
         self.tokenizer = tokenizer
 
-        self.instance_data_root = Path(instance_data_root)
-        self.mask_data_root = Path(mask_data_root)
-        if not self.instance_data_root.exists() or not self.mask_data_root.exists():
-            raise ValueError("Instance images root or mask images root doesn't exists.")
+        # self.instance_data_root = Path(instance_data_root)
+        # self.mask_data_root = Path(mask_data_root)
+        # if not self.instance_data_root.exists() or not self.mask_data_root.exists():
+        #     raise ValueError("Instance images root or mask images root doesn't exists.")
 
-        self.image_paths = sorted(list(self.instance_data_root.iterdir()))
-        self.mask_paths = sorted([self.mask_data_root / img.name for img in self.image_paths]) # Corresponding masks for each image
+        # self.image_paths = sorted(list(self.instance_data_root.iterdir()))
+        # self.mask_paths = sorted([self.mask_data_root / img.name for img in self.image_paths]) # Corresponding masks for each image
+        
+        self.image_paths = image_paths  # List of image file paths
+        self.mask_paths = mask_paths  # List of corresponding mask file paths
+
+
         # Ensure there are corresponding masks for each image
         assert all(mask.exists() for mask in self.mask_paths), "Some masks are missing for the images!"
 
@@ -301,9 +354,29 @@ def main():
 
     logger.info("Optimizer and scheduler created")
 
+    # Load dataset
+    all_image_paths = sorted(list(Path(args.instance_data_dir).iterdir()))
+    all_mask_paths = sorted([Path(args.mask_data_dir) / img.name for img in all_image_paths])
+
+    # Split dataset into train and validation
+    train_image_paths, val_image_paths, train_mask_paths, val_mask_paths = train_test_split(
+        all_image_paths, all_mask_paths, test_size=args.val_split, random_state=args.seed
+    )
+
+    # Training dataset
     train_dataset = MSInpaintingDataset(
-        instance_data_root=args.instance_data_dir,
-        mask_data_root=args.mask_data_dir,
+        image_paths=train_image_paths,
+        mask_paths=train_mask_paths,
+        instance_prompt=args.instance_prompt,
+        tokenizer=tokenizer,
+        size=args.resolution,
+        center_crop=args.center_crop,
+    )
+
+    # Validation dataset
+    val_dataset = MSInpaintingDataset(
+        image_paths=val_image_paths,
+        mask_paths=val_mask_paths,
         instance_prompt=args.instance_prompt,
         tokenizer=tokenizer,
         size=args.resolution,
@@ -324,9 +397,9 @@ def main():
         batch = {"input_ids": input_ids, "pixel_values": pixel_values, "masks": masks, "masked_images": masked_images}
         return batch
 
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.train_batch_size, shuffle=True, collate_fn=collate_fn
-    )
+    # Dataloaders
+    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True, collate_fn=collate_fn)
+    val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=args.val_batch_size, shuffle=False, collate_fn=collate_fn)
 
     logger.info(f"Data loaded successfully. Length of dataset: {len(train_dataset)}. Length of dataloader: {len(train_dataloader)}")
 
@@ -499,11 +572,13 @@ def main():
                 progress_bar.update(1)
                 global_step += 1
 
-                if global_step % args.checkpointing_steps == 0:
-                    if accelerator.is_main_process:
+                if accelerator.is_main_process:
+                    if global_step % args.checkpointing_steps == 0:
                         save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
+                    if global_step % args.validation_steps == 0: # Validate the model
+                        log_validation(global_step, unet, vae, val_dataloader, accelerator, args)
 
             logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
