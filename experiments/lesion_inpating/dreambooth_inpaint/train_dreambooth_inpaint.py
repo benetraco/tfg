@@ -26,7 +26,7 @@ from diffusers import (
     StableDiffusionPipeline,
     UNet2DConditionModel,
     # DiffusionPipeline,
-    DPMSolverMultistepScheduler,
+    # DPMSolverMultistepScheduler,
 )
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version
@@ -39,48 +39,73 @@ check_min_version("0.13.0.dev0")
 logger = get_logger(__name__)
 
 # Restrict PyTorch to use only GPU X
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 # Set the device to 0 (because it's now the only visible device)
 torch.cuda.set_device(0)
 
-def log_validation(global_step, model, vae, val_dataloader, accelerator, args):
-    model.eval()
-    vae.eval()
-    device = accelerator.device
-    transform = transforms.ToPILImage()
+def log_images_wandb(accelerator, pixel_values, masks, masked_images, generated_image, global_step):
+    batch_size = pixel_values.shape[0]
+    for j in range(batch_size):
+        images = []
+        images.append(wandb.Image(pixel_values[j], mode='F', caption="GT"))
+        images.append(wandb.Image(masks[j], mode='F', caption="Mask"))
+        images.append(wandb.Image(masked_images[j], mode='F', caption="Masked"))
+        images.append(wandb.Image(generated_image[j], mode='F', caption="Generated"))
+        images.append(wandb.Image(generated_image[j][0], mode='F', caption="Generated one-channel"))
+        accelerator.log({f"Validation Sample {j}": images}, step=global_step)
     
-    for i, batch in enumerate(val_dataloader):
-        with torch.no_grad():
-            pixel_values = batch["pixel_values"].to(device)
-            lesion_masks = batch["masks"].to(device)
-            masked_images = batch["masked_images"].to(device)
-            input_ids = batch["input_ids"].to(device)
+def validate_model(unet, vae, text_encoder, noise_scheduler, val_dataloader, global_step, accelerator, weight_dtype, logger, args):
+    unet.eval()
+    vae.eval()
 
-            # Encode and decode images through VAE
-            latents = vae.encode(masked_images).latent_dist.sample()
-            latents = latents * vae.config.scaling_factor
+    with torch.no_grad():
+        for i, batch in enumerate(val_dataloader):
+            pixel_values = batch["pixel_values"].to(accelerator.device)
+            masks = batch["masks"].to(accelerator.device)
+            masked_images = batch["masked_images"].to(accelerator.device)
+            input_ids = batch["input_ids"].to(accelerator.device)
 
-            # Run the model
-            noise_pred = model(latents, timesteps=torch.tensor([50], device=device), encoder_hidden_states=input_ids).sample
+            # Encode masked images into latents
+            masked_latents = vae.encode(masked_images.reshape(pixel_values.shape).to(dtype=weight_dtype)).latent_dist.sample()
+            masked_latents = masked_latents * vae.config.scaling_factor
 
-            # Decode output
-            pred_images = vae.decode(noise_pred / vae.config.scaling_factor).sample
+            if masks.dim() == 3:
+                latent_masks = masks.unsqueeze(1)
+            else:
+                latent_masks = masks
+            latent_masks = torch.nn.functional.interpolate(
+                latent_masks, size=(masked_latents.shape[-2], masked_latents.shape[-1]), mode="nearest"
+            )
 
-        # Log first 8 images
-        if i == 0:
-            images = []
-            for j in range(min(8, pixel_values.shape[0])):
-                images.append(wandb.Image(transform(pixel_values[j].cpu()), caption="GT"))
-                images.append(wandb.Image(transform(masked_images[j].cpu()), caption="Masked"))
-                images.append(wandb.Image(transform(pred_images[j].cpu()), caption="Predicted"))
-                images.append(wandb.Image(transform(lesion_masks[j].cpu()), caption="Mask"))
+            # Prepare input to U-Net
+            noise = torch.randn_like(masked_latents)
+            noisy_latents = noise_scheduler.add_noise(masked_latents, noise, timesteps=torch.tensor([50], device=accelerator.device))
+            
+            latent_model_input = torch.cat([noisy_latents, latent_masks, masked_latents], dim=1)
 
-            wandb.log({"Validation Samples": images, "global_step": global_step})
+            # Get text embeddings
+            encoder_hidden_states = text_encoder(input_ids)[0]
 
-        if i >= 2:  # Limit validation logging to a few batches
-            break
+            # Predict lesion generation
+            predicted_noise = unet(latent_model_input, torch.tensor([50], device=accelerator.device), encoder_hidden_states).sample
 
-    model.train()
+            # Denoise the image using the VAE decoder
+            generated_latents = masked_latents - predicted_noise  # Assuming noise prediction
+            generated_image = vae.decode(generated_latents / vae.config.scaling_factor).sample
+
+            # # Normalize for logging --> No need for normalization if mode='F' is used in wandb.Image
+            # masked_images = (masked_images + 1) / 2  # Convert from [-1,1] to [0,1]
+            # generated_image = (generated_image + 1) / 2  # Same normalization
+            # pixel_values = (pixel_values + 1) / 2  # Same normalization
+
+            # Save/log images
+            if args.log_with == "wandb":
+                log_images_wandb(accelerator, pixel_values.cpu(), masks.cpu(), masked_images.cpu(), generated_image.cpu(), global_step)
+            else:
+                ValueError(f"Logging with '{args.log_with}' is not supported yet. Please use 'wandb'.")
+
+    unet.train()
+    vae.train()
 
 
 def prepare_mask_and_masked_image(image, mask):
@@ -160,10 +185,8 @@ class MSInpaintingDataset(Dataset):
         instance_prompt,
         tokenizer,
         size=512,
-        center_crop=False,
     ):
         self.size = size
-        self.center_crop = center_crop
         self.tokenizer = tokenizer
 
         # self.instance_data_root = Path(instance_data_root)
@@ -188,7 +211,7 @@ class MSInpaintingDataset(Dataset):
         self.image_transforms_resize_and_crop = transforms.Compose(
             [
                 transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
-                transforms.CenterCrop(size) if center_crop else transforms.RandomCrop(size),
+                transforms.CenterCrop(size),
             ]
         )
 
@@ -358,9 +381,11 @@ def main():
     all_image_paths = sorted(list(Path(args.instance_data_dir).iterdir()))
     all_mask_paths = sorted([Path(args.mask_data_dir) / img.name for img in all_image_paths])
 
+    # calculate the test_size so there is only one batch of size args.val_batch_size
+    val_split = args.val_batch_size / len(all_image_paths)
     # Split dataset into train and validation
     train_image_paths, val_image_paths, train_mask_paths, val_mask_paths = train_test_split(
-        all_image_paths, all_mask_paths, test_size=args.val_split, random_state=args.seed
+        all_image_paths, all_mask_paths, test_size=val_split, random_state=args.seed
     )
 
     # Training dataset
@@ -370,7 +395,6 @@ def main():
         instance_prompt=args.instance_prompt,
         tokenizer=tokenizer,
         size=args.resolution,
-        center_crop=args.center_crop,
     )
 
     # Validation dataset
@@ -380,7 +404,6 @@ def main():
         instance_prompt=args.instance_prompt,
         tokenizer=tokenizer,
         size=args.resolution,
-        center_crop=args.center_crop,
     )
 
     def collate_fn(examples):
@@ -491,16 +514,19 @@ def main():
             resume_step = resume_global_step % (num_update_steps_per_epoch * args.gradient_accumulation_steps)
 
     # Only show the progress bar once on each machine.
-    progress_bar = tqdm(range(global_step, args.max_train_steps), disable=not accelerator.is_local_main_process)
-    progress_bar.set_description("Steps")
+    progress_bar = tqdm(range(args.num_train_epochs), disable=not accelerator.is_local_main_process)
+    progress_bar.set_description("Epochs")
 
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train()
+        train_loss = [] # Store the loss for logging
+        pbar = tqdm(total=num_update_steps_per_epoch, desc=f"Epoch {epoch + 1}/{args.num_train_epochs}")
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
                 if step % args.gradient_accumulation_steps == 0:
                     progress_bar.update(1)
+
                 continue
 
             with accelerator.accumulate(unet):
@@ -555,6 +581,9 @@ def main():
 
                 loss = F.mse_loss(noise_pred.float(), target.float(), reduction="mean")
 
+                # Logging
+                train_loss.append(accelerator.gather(loss.repeat(bsz)).mean().item())
+
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     params_to_clip = (
@@ -569,8 +598,12 @@ def main():
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
-                progress_bar.update(1)
+                pbar.update(1)
                 global_step += 1
+                train_loss = np.mean(train_loss)
+                accelerator.log({"loss": train_loss, "log-loss": np.log(train_loss)}, step=global_step)
+
+                train_loss = [] # reset the loss for the next accumulation
 
                 if accelerator.is_main_process:
                     if global_step % args.checkpointing_steps == 0:
@@ -578,15 +611,17 @@ def main():
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
                     if global_step % args.validation_steps == 0: # Validate the model
-                        log_validation(global_step, unet, vae, val_dataloader, accelerator, args)
-
-            logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
-            progress_bar.set_postfix(**logs)
+                        validate_model(unet, vae, text_encoder, noise_scheduler, val_dataloader, global_step, accelerator, weight_dtype, logger, args)
+            logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
+            
+            pbar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
             if global_step >= args.max_train_steps:
                 break
 
+        progress_bar.update(1)
+        pbar.close()
         accelerator.wait_for_everyone()
 
     # Create the pipeline using using the trained modules and save it.
