@@ -18,23 +18,23 @@ center_crop: true # Whether to center crop the input images to the resolution.
 
 train_text_encoder: false # Whether to train the text encoder.
 
-train_batch_size: 8 # Batch size (per device) for the training dataloader.
+train_batch_size: 16 # Batch size (per device) for the training dataloader.
 
-sample_batch_size: 4 # Batch size (per device) for sampling images.
+# sample_batch_size: 4 # Batch size (per device) for sampling images.
 
 num_train_epochs: 50 # Number of training epochs.
 
 max_train_steps: null # Total number of training steps to perform. If provided, overrides num_train_epochs.
 
-gradient_accumulation_steps: 1 # Number of updates steps to accumulate before performing a backward/update pass.
+gradient_accumulation_steps: 2 # Number of updates steps to accumulate before performing a backward/update pass.
 
 gradient_checkpointing: false # Whether to use gradient checkpointing to save memory.
 
-learning_rate: 5e-6 # Initial learning rate.
+learning_rate: 1.0e-4 #5e-6 # Initial learning rate.
 
 scale_lr: false # Scale the learning rate by number of GPUs, gradient accumulation steps, and batch size.
 
-lr_scheduler: "constant" # The scheduler type to use. Options are "constant", "linear", "cosine"...
+lr_scheduler: "cosine" # The scheduler type to use. Options are "constant", "linear", "cosine"...
 
 lr_warmup_steps: 500 # Number of steps for the warmup in the lr scheduler.
 
@@ -44,7 +44,7 @@ adam_beta1: 0.9 # The beta1 parameter for the Adam optimizer.
 
 adam_beta2: 0.999 # The beta2 parameter for the Adam optimizer.
 
-adam_weight_decay: 0.01 # Weight decay to use.
+adam_weight_decay: 1.0e-6 #0.01 # Weight decay to use.
 
 adam_epsilon: 1e-8 # Epsilon value for the Adam optimizer.
 
@@ -73,4 +73,5 @@ log_with: "wandb" # The logger to use. Now only "wandb" is supported.
 
 # val_split: 0.1  # 10% of data for validation
 val_batch_size: 8
-validation_steps: 2  # Log validation every 1000 steps
+validation_steps: 100  # Log validation every 1000 steps
+validation_epochs: 10 # Run validation every 10 epochs

@@ -610,7 +610,8 @@ def main():
                         save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
-                    if global_step % args.validation_steps == 0: # Validate the model
+                    if global_step % args.validation_steps == 0 or (epoch + 1) % args.validation_epochs == 0:
+                        print(f"Validating model... (global_step={global_step}, epoch={epoch})")
                         validate_model(unet, vae, text_encoder, noise_scheduler, val_dataloader, global_step, accelerator, weight_dtype, logger, args)
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             
