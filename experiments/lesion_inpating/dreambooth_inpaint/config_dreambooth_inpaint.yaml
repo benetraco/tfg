@@ -75,3 +75,6 @@ log_with: "wandb" # The logger to use. Now only "wandb" is supported.
 val_batch_size: 8
 validation_steps: 100  # Log validation every 1000 steps
 validation_epochs: 10 # Run validation every 10 epochs
+
+discretize_mask: false # Whether to discretize the input images.
+black_mask: false # Whether to use black lesion masks.

@@ -108,19 +108,28 @@ def validate_model(unet, vae, text_encoder, noise_scheduler, val_dataloader, glo
     vae.train()
 
 
-def prepare_mask_and_masked_image(image, mask):
+def prepare_mask_and_masked_image(image, mask, black_mask=True, discretize_mask=True):
     image = np.array(image.convert("RGB"))
-    image = image[None].transpose(0, 3, 1, 2)
+    # image = image[None].transpose(0, 3, 1, 2)
+    image = image.transpose(2, 0, 1)
     image = torch.from_numpy(image).to(dtype=torch.float32) / 127.5 - 1.0
 
     mask = np.array(mask.convert("L"))
     mask = mask.astype(np.float32) / 255.0
-    mask = mask[None, None]
-    mask[mask < 0.5] = 0
-    mask[mask >= 0.5] = 1
+    # mask = mask[None, None]
+    mask = mask[None]
+    if discretize_mask:
+        mask[mask < 0.5] = 0
+        mask[mask >= 0.5] = 1
+    else:
+        mask[mask < 0.0] = 0
+        mask[mask >= 1.0] = 1
     mask = torch.from_numpy(mask)
 
-    masked_image = image * (mask < 0.5)
+    if black_mask:
+        masked_image = image * (mask < 0.5) + (mask >= 0.5) * -1 if discretize_mask else image * (1 - mask)
+    else:
+        masked_image = image * (mask < 0.5)
 
     return mask, masked_image
 
@@ -185,9 +194,13 @@ class MSInpaintingDataset(Dataset):
         instance_prompt,
         tokenizer,
         size=512,
+        black_mask=True,
+        discretize_mask=True,
     ):
         self.size = size
         self.tokenizer = tokenizer
+        self.black_mask = black_mask
+        self.discretize_mask = discretize_mask
 
         # self.instance_data_root = Path(instance_data_root)
         # self.mask_data_root = Path(mask_data_root)
@@ -225,34 +238,63 @@ class MSInpaintingDataset(Dataset):
     def __len__(self):
         return self._length
 
+    # def __getitem__(self, index):
+    #     example = {}
+
+    #     # Load instance image
+    #     # instance_image = Image.open(self.images_path[index % self.num_instance_images])
+    #     instance_image = Image.open(self.image_paths[index]).convert("RGB")
+    #     instance_image = self.image_transforms_resize_and_crop(instance_image)
+
+    #     # Load lesion mask
+    #     lesion_mask = Image.open(self.mask_paths[index]).convert("L")
+    #     lesion_mask = self.image_transforms_resize_and_crop(lesion_mask)
+    #     lesion_mask = transforms.ToTensor()(lesion_mask)
+    #     lesion_mask = (lesion_mask > 0.5).float()
+
+    #     # Create masked image
+    #     instance_image_tensor = self.image_transforms(instance_image)
+    #     lesion_mask_expanded = lesion_mask.expand_as(instance_image_tensor) # Expand mask to the same shape as the image (3 channels)
+    #     masked_image = instance_image_tensor * (1 - lesion_mask_expanded)
+
+    #     # Store processed data
+    #     example["PIL_images"] = instance_image
+    #     example["instance_images"] = instance_image_tensor
+    #     example["lesion_masks"] = lesion_mask
+    #     example["masked_images"] = masked_image
+
+    #     # Encode text prompt
+    #     example["instance_prompt_ids"] = self.tokenizer(
+    #         self.instance_prompt,
+    #         padding="do_not_pad",
+    #         truncation=True,
+    #         max_length=self.tokenizer.model_max_length,
+    #     ).input_ids
+
+    #     return example
+
+
     def __getitem__(self, index):
         example = {}
-
-        # Load instance image
-        # instance_image = Image.open(self.images_path[index % self.num_instance_images])
-        instance_image = Image.open(self.image_paths[index]).convert("RGB")
+        instance_image_path = self.image_paths[index % self.num_instance_images]
+        instance_image = Image.open(instance_image_path)
+        if not instance_image.mode == "RGB":
+            instance_image = instance_image.convert("RGB")
         instance_image = self.image_transforms_resize_and_crop(instance_image)
+        instance_prompt = self.instance_prompt
+        mask = Image.open(self.mask_paths[index])
+        if not mask.mode == "L":
+            mask = mask.convert("L")
+        mask = self.image_transforms_resize_and_crop(mask)
+        # prepare mask and masked image
+        mask, masked_image = prepare_mask_and_masked_image(instance_image, mask, black_mask=self.black_mask, discretize_mask=self.discretize_mask)
 
-        # Load lesion mask
-        lesion_mask = Image.open(self.mask_paths[index]).convert("L")
-        lesion_mask = self.image_transforms_resize_and_crop(lesion_mask)
-        lesion_mask = transforms.ToTensor()(lesion_mask)
-        lesion_mask = (lesion_mask > 0.5).float()
-
-        # Create masked image
-        instance_image_tensor = self.image_transforms(instance_image)
-        lesion_mask_expanded = lesion_mask.expand_as(instance_image_tensor) # Expand mask to the same shape as the image (3 channels)
-        masked_image = instance_image_tensor * (1 - lesion_mask_expanded)
-
-        # Store processed data
-        example["PIL_images"] = instance_image
-        example["instance_images"] = instance_image_tensor
-        example["lesion_masks"] = lesion_mask
+        example["lesion_masks"] = mask
         example["masked_images"] = masked_image
-
-        # Encode text prompt
+        example["PIL_images"] = instance_image
+        example["instance_images"] = self.image_transforms(instance_image)
         example["instance_prompt_ids"] = self.tokenizer(
-            self.instance_prompt,
+            instance_prompt,
             padding="do_not_pad",
             truncation=True,
             max_length=self.tokenizer.model_max_length,
@@ -395,8 +437,9 @@ def main():
         instance_prompt=args.instance_prompt,
         tokenizer=tokenizer,
         size=args.resolution,
+        black_mask=args.black_mask,
+        discretize_mask=args.discretize_mask,
     )
-
     # Validation dataset
     val_dataset = MSInpaintingDataset(
         image_paths=val_image_paths,
@@ -404,6 +447,8 @@ def main():
         instance_prompt=args.instance_prompt,
         tokenizer=tokenizer,
         size=args.resolution,
+        black_mask=args.black_mask,
+        discretize_mask=args.discretize_mask,
     )
 
     def collate_fn(examples):
