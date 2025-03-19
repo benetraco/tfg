@@ -2,9 +2,9 @@ pretrained_model_name_or_path: "stable-diffusion-v1-5/stable-diffusion-inpaintin
                               # maybe "sd-legacy/stable-diffusion-inpainting" or "runwayml/stable-diffusion-inpainting" 
 tokenizer_name: "" # Pretrained tokenizer name or path if not the same as model_name.
 
-instance_data_dir: "/home/benet/data/VH2D/images/flair" # A folder containing the training data of instance images.
+instance_data_dir: "/home/benet/data/VH2D/images/train/flair" # A folder containing the training data of instance images.
 
-mask_data_dir: "/home/benet/data/VH2D/images/mask" # A folder containing the training data of mask images.
+mask_data_dir: "/home/benet/data/VH2D/images/train/mask" # A folder containing the training data of mask images.
 
 instance_prompt: "MS lesion in an axial FLAIR MRI brain scan." # The prompt with identifier specifying the instance.
                 # "Axial FLAIR MRI scan of the human brain with an MS lesion."
@@ -62,7 +62,7 @@ mixed_precision: "no" # Whether to use mixed precision (no, fp16, bf16).
 
 local_rank: -1 # For distributed training: local rank.
 
-checkpointing_steps: 500 # Save a checkpoint of the training state every X updates.
+checkpointing_steps: 250 # Save a checkpoint of the training state every X updates.
 
 checkpoints_total_limit: null # Max number of checkpoints to store.
 
@@ -71,10 +71,16 @@ resume_from_checkpoint: "" # Whether training should be resumed from a previous 
 
 log_with: "wandb" # The logger to use. Now only "wandb" is supported.
 
-# val_split: 0.1  # 10% of data for validation
-val_batch_size: 8
+# using validate_model (bs != 0)
+val_batch_size: 0
 validation_steps: 100  # Log validation every 1000 steps
-validation_epochs: 10 # Run validation every 10 epochs
+validation_epochs: 5 # Run validation every 10 epochs
 
-discretize_mask: false # Whether to discretize the input images.
-black_mask: false # Whether to use black lesion masks.
+# using log_validation
+val_input_image_path: "/home/benet/data/VH2D/images/val/flair" # Path to the validation input image (just 1 image).
+val_mask_image_path: "/home/benet/data/VH2D/images/val/mask" # Path to the validation mask image (just 1 image).
+num_validation_images: 4 # Number of validation images to sample.
+validation_prompt: "MS lesion in an axial FLAIR MRI brain scan." # The prompt with identifier specifying the validation instance.
+
+discretize_mask: true # Whether to discretize the input images.
+black_mask: true # Whether to use black lesion masks.

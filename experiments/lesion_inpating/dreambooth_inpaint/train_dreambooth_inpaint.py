@@ -25,8 +25,8 @@ from diffusers import (
     DDPMScheduler,
     StableDiffusionPipeline,
     UNet2DConditionModel,
-    # DiffusionPipeline,
-    # DPMSolverMultistepScheduler,
+    DiffusionPipeline,
+    DPMSolverMultistepScheduler,
 )
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version
@@ -39,7 +39,7 @@ check_min_version("0.13.0.dev0")
 logger = get_logger(__name__)
 
 # Restrict PyTorch to use only GPU X
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 # Set the device to 0 (because it's now the only visible device)
 torch.cuda.set_device(0)
 
@@ -53,7 +53,82 @@ def log_images_wandb(accelerator, pixel_values, masks, masked_images, generated_
         images.append(wandb.Image(generated_image[j], mode='F', caption="Generated"))
         images.append(wandb.Image(generated_image[j][0], mode='F', caption="Generated one-channel"))
         accelerator.log({f"Validation Sample {j}": images}, step=global_step)
+
+def log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step):
+    logger.info(
+        f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
+        f" {args.validation_prompt}."
+    )
+    image_transforms_resize_and_crop = transforms.Compose(
+        [
+            transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.CenterCrop(args.resolution),
+        ]
+    )
+
+    # take the first image in the args.val_input_image_path and the first mask in the args.val_mask_image_path
+    val_input_image_path = list(Path(args.val_input_image_path).glob("*.png"))[0]
+    val_mask_image_path = list(Path(args.val_mask_image_path).glob("*.png"))[0]
+
+    # load input image
+    input_image = image_transforms_resize_and_crop(Image.open(val_input_image_path).convert("RGB"))
+    # create the masked versions (black and grey)
+    mask = image_transforms_resize_and_crop(Image.open(val_mask_image_path).convert("RGB"))
+    _, masked_image_grey = prepare_mask_and_masked_image(input_image, mask, black_mask=False)
+    _, masked_image_black = prepare_mask_and_masked_image(input_image, mask, black_mask=True)
+    masked_image_grey = Image.fromarray(((masked_image_grey[0].numpy() + 1.0) * 127.5).astype(np.uint8)).convert("RGB")
+    masked_image_black = Image.fromarray(((masked_image_black[0].numpy() + 1.0) * 127.5).astype(np.uint8)).convert("RGB")
     
+    # load mask image
+    mask_image = image_transforms_resize_and_crop(Image.open(val_mask_image_path).convert("RGB"))
+
+    
+    # create pipeline (note: unet and vae are loaded again in float32)
+    pipeline = DiffusionPipeline.from_pretrained(
+        args.pretrained_model_name_or_path,
+        text_encoder=accelerator.unwrap_model(text_encoder),
+        tokenizer=tokenizer,
+        unet=accelerator.unwrap_model(unet),
+        vae=vae,
+        torch_dtype=weight_dtype,
+        safety_checker=None,
+    )
+    pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
+    pipeline = pipeline.to(accelerator.device)
+    pipeline.set_progress_bar_config(disable=True)
+
+    # run inference
+    generator = None if args.seed is None else torch.Generator(device=accelerator.device).manual_seed(args.seed)
+    images = []
+    images_grey = []
+    images_black = []
+    for _ in range(args.num_validation_images):
+        with torch.autocast("cuda"):
+            image = pipeline(args.validation_prompt, image=input_image, mask_image=mask_image, num_inference_steps=25, generator=generator).images[0]
+            image_grey = pipeline(args.validation_prompt, image=masked_image_grey, mask_image=mask_image, num_inference_steps=25, generator=generator).images[0]
+            image_black = pipeline(args.validation_prompt, image=masked_image_black, mask_image=mask_image, num_inference_steps=25, generator=generator).images[0]
+        images.append(image)
+        images_grey.append(image_grey)
+        images_black.append(image_black)
+
+    for tracker in accelerator.trackers:
+        if tracker.name == "wandb":
+            tracker.log(
+                {
+                    "Inputs": [wandb.Image(input_image, caption="Input Image"), wandb.Image(mask_image, caption="Mask Image"),
+                               wandb.Image(masked_image_grey, caption="Input Image (Grey)"), wandb.Image(masked_image_black, caption="Input Image (Black)")],
+                    "Validation": [wandb.Image(image, caption=f"{i}: {args.validation_prompt}") for i, image in enumerate(images)],
+                    "Validation Grey": [wandb.Image(image, caption=f"{i}: {args.validation_prompt}") for i, image in enumerate(images_grey)],
+                    "Validation Black": [wandb.Image(image, caption=f"{i}: {args.validation_prompt}") for i, image in enumerate(images_black)],
+                },
+                step=global_step,
+            )
+        else:
+            ValueError(f"Tracker '{tracker.name}' is not supported for validation logging. Please use 'wandb'.")
+
+    del pipeline
+    torch.cuda.empty_cache()
+
 def validate_model(unet, vae, text_encoder, noise_scheduler, val_dataloader, global_step, accelerator, weight_dtype, logger, args):
     unet.eval()
     vae.eval()
@@ -424,26 +499,32 @@ def main():
     all_mask_paths = sorted([Path(args.mask_data_dir) / img.name for img in all_image_paths])
 
     # calculate the test_size so there is only one batch of size args.val_batch_size
-    val_split = args.val_batch_size / len(all_image_paths)
-    # Split dataset into train and validation
-    train_image_paths, val_image_paths, train_mask_paths, val_mask_paths = train_test_split(
-        all_image_paths, all_mask_paths, test_size=val_split, random_state=args.seed
-    )
+    if args.val_batch_size != 0:
+        val_split = args.val_batch_size / len(all_image_paths)
+        # Split dataset into train and validation
+        train_image_paths, val_image_paths, train_mask_paths, val_mask_paths = train_test_split(
+            all_image_paths, all_mask_paths, test_size=val_split, random_state=args.seed
+        )    
+        
+        # Validation dataset
+        val_dataset = MSInpaintingDataset(
+            image_paths=val_image_paths,
+            mask_paths=val_mask_paths,
+            instance_prompt=args.instance_prompt,
+            tokenizer=tokenizer,
+            size=args.resolution,
+            black_mask=args.black_mask,
+            discretize_mask=args.discretize_mask,
+        )
+    else:
+        train_image_paths = all_image_paths
+        train_mask_paths = all_mask_paths
+
 
     # Training dataset
     train_dataset = MSInpaintingDataset(
         image_paths=train_image_paths,
         mask_paths=train_mask_paths,
-        instance_prompt=args.instance_prompt,
-        tokenizer=tokenizer,
-        size=args.resolution,
-        black_mask=args.black_mask,
-        discretize_mask=args.discretize_mask,
-    )
-    # Validation dataset
-    val_dataset = MSInpaintingDataset(
-        image_paths=val_image_paths,
-        mask_paths=val_mask_paths,
         instance_prompt=args.instance_prompt,
         tokenizer=tokenizer,
         size=args.resolution,
@@ -467,7 +548,8 @@ def main():
 
     # Dataloaders
     train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True, collate_fn=collate_fn)
-    val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=args.val_batch_size, shuffle=False, collate_fn=collate_fn)
+    if args.val_batch_size != 0:
+        val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=args.val_batch_size, shuffle=False, collate_fn=collate_fn)
 
     logger.info(f"Data loaded successfully. Length of dataset: {len(train_dataset)}. Length of dataloader: {len(train_dataloader)}")
 
@@ -558,9 +640,9 @@ def main():
             first_epoch = global_step // num_update_steps_per_epoch
             resume_step = resume_global_step % (num_update_steps_per_epoch * args.gradient_accumulation_steps)
 
-    # Only show the progress bar once on each machine.
-    progress_bar = tqdm(range(args.num_train_epochs), disable=not accelerator.is_local_main_process)
-    progress_bar.set_description("Epochs")
+    # log_validate before training
+    if args.val_batch_size == 0:
+        log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step)
 
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train()
@@ -569,9 +651,6 @@ def main():
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
-                if step % args.gradient_accumulation_steps == 0:
-                    progress_bar.update(1)
-
                 continue
 
             with accelerator.accumulate(unet):
@@ -655,9 +734,6 @@ def main():
                         save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
-                    if global_step % args.validation_steps == 0 or (epoch + 1) % args.validation_epochs == 0:
-                        print(f"Validating model... (global_step={global_step}, epoch={epoch})")
-                        validate_model(unet, vae, text_encoder, noise_scheduler, val_dataloader, global_step, accelerator, weight_dtype, logger, args)
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             
             pbar.set_postfix(**logs)
@@ -666,9 +742,14 @@ def main():
             if global_step >= args.max_train_steps:
                 break
 
-        progress_bar.update(1)
         pbar.close()
         accelerator.wait_for_everyone()
+
+        # Log images to validate the model
+        if (epoch + 1) % args.validation_epochs == 0: #or global_step % args.validation_steps == 0
+            if accelerator.is_main_process:
+                # validate_model(unet, vae, text_encoder, noise_scheduler, val_dataloader, global_step, accelerator, weight_dtype, logger, args)
+                log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step)
 
     # Create the pipeline using using the trained modules and save it.
     if accelerator.is_main_process:
