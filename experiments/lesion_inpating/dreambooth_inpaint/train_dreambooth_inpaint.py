@@ -43,16 +43,6 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 # Set the device to 0 (because it's now the only visible device)
 torch.cuda.set_device(0)
 
-def log_images_wandb(accelerator, pixel_values, masks, masked_images, generated_image, global_step):
-    batch_size = pixel_values.shape[0]
-    for j in range(batch_size):
-        images = []
-        images.append(wandb.Image(pixel_values[j], mode='F', caption="GT"))
-        images.append(wandb.Image(masks[j], mode='F', caption="Mask"))
-        images.append(wandb.Image(masked_images[j], mode='F', caption="Masked"))
-        images.append(wandb.Image(generated_image[j], mode='F', caption="Generated"))
-        images.append(wandb.Image(generated_image[j][0], mode='F', caption="Generated one-channel"))
-        accelerator.log({f"Validation Sample {j}": images}, step=global_step)
 
 def log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step):
     logger.info(
@@ -128,59 +118,6 @@ def log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight
 
     del pipeline
     torch.cuda.empty_cache()
-
-def validate_model(unet, vae, text_encoder, noise_scheduler, val_dataloader, global_step, accelerator, weight_dtype, logger, args):
-    unet.eval()
-    vae.eval()
-
-    with torch.no_grad():
-        for i, batch in enumerate(val_dataloader):
-            pixel_values = batch["pixel_values"].to(accelerator.device)
-            masks = batch["masks"].to(accelerator.device)
-            masked_images = batch["masked_images"].to(accelerator.device)
-            input_ids = batch["input_ids"].to(accelerator.device)
-
-            # Encode masked images into latents
-            masked_latents = vae.encode(masked_images.reshape(pixel_values.shape).to(dtype=weight_dtype)).latent_dist.sample()
-            masked_latents = masked_latents * vae.config.scaling_factor
-
-            if masks.dim() == 3:
-                latent_masks = masks.unsqueeze(1)
-            else:
-                latent_masks = masks
-            latent_masks = torch.nn.functional.interpolate(
-                latent_masks, size=(masked_latents.shape[-2], masked_latents.shape[-1]), mode="nearest"
-            )
-
-            # Prepare input to U-Net
-            noise = torch.randn_like(masked_latents)
-            noisy_latents = noise_scheduler.add_noise(masked_latents, noise, timesteps=torch.tensor([50], device=accelerator.device))
-            
-            latent_model_input = torch.cat([noisy_latents, latent_masks, masked_latents], dim=1)
-
-            # Get text embeddings
-            encoder_hidden_states = text_encoder(input_ids)[0]
-
-            # Predict lesion generation
-            predicted_noise = unet(latent_model_input, torch.tensor([50], device=accelerator.device), encoder_hidden_states).sample
-
-            # Denoise the image using the VAE decoder
-            generated_latents = masked_latents - predicted_noise  # Assuming noise prediction
-            generated_image = vae.decode(generated_latents / vae.config.scaling_factor).sample
-
-            # # Normalize for logging --> No need for normalization if mode='F' is used in wandb.Image
-            # masked_images = (masked_images + 1) / 2  # Convert from [-1,1] to [0,1]
-            # generated_image = (generated_image + 1) / 2  # Same normalization
-            # pixel_values = (pixel_values + 1) / 2  # Same normalization
-
-            # Save/log images
-            if args.log_with == "wandb":
-                log_images_wandb(accelerator, pixel_values.cpu(), masks.cpu(), masked_images.cpu(), generated_image.cpu(), global_step)
-            else:
-                ValueError(f"Logging with '{args.log_with}' is not supported yet. Please use 'wandb'.")
-
-    unet.train()
-    vae.train()
 
 
 def prepare_mask_and_masked_image(image, mask, black_mask=True, discretize_mask=True):
@@ -312,42 +249,6 @@ class MSInpaintingDataset(Dataset):
 
     def __len__(self):
         return self._length
-
-    # def __getitem__(self, index):
-    #     example = {}
-
-    #     # Load instance image
-    #     # instance_image = Image.open(self.images_path[index % self.num_instance_images])
-    #     instance_image = Image.open(self.image_paths[index]).convert("RGB")
-    #     instance_image = self.image_transforms_resize_and_crop(instance_image)
-
-    #     # Load lesion mask
-    #     lesion_mask = Image.open(self.mask_paths[index]).convert("L")
-    #     lesion_mask = self.image_transforms_resize_and_crop(lesion_mask)
-    #     lesion_mask = transforms.ToTensor()(lesion_mask)
-    #     lesion_mask = (lesion_mask > 0.5).float()
-
-    #     # Create masked image
-    #     instance_image_tensor = self.image_transforms(instance_image)
-    #     lesion_mask_expanded = lesion_mask.expand_as(instance_image_tensor) # Expand mask to the same shape as the image (3 channels)
-    #     masked_image = instance_image_tensor * (1 - lesion_mask_expanded)
-
-    #     # Store processed data
-    #     example["PIL_images"] = instance_image
-    #     example["instance_images"] = instance_image_tensor
-    #     example["lesion_masks"] = lesion_mask
-    #     example["masked_images"] = masked_image
-
-    #     # Encode text prompt
-    #     example["instance_prompt_ids"] = self.tokenizer(
-    #         self.instance_prompt,
-    #         padding="do_not_pad",
-    #         truncation=True,
-    #         max_length=self.tokenizer.model_max_length,
-    #     ).input_ids
-
-    #     return example
-
 
     def __getitem__(self, index):
         example = {}
@@ -495,31 +396,8 @@ def main():
     logger.info("Optimizer and scheduler created")
 
     # Load dataset
-    all_image_paths = sorted(list(Path(args.instance_data_dir).iterdir()))
-    all_mask_paths = sorted([Path(args.mask_data_dir) / img.name for img in all_image_paths])
-
-    # calculate the test_size so there is only one batch of size args.val_batch_size
-    if args.val_batch_size != 0:
-        val_split = args.val_batch_size / len(all_image_paths)
-        # Split dataset into train and validation
-        train_image_paths, val_image_paths, train_mask_paths, val_mask_paths = train_test_split(
-            all_image_paths, all_mask_paths, test_size=val_split, random_state=args.seed
-        )    
-        
-        # Validation dataset
-        val_dataset = MSInpaintingDataset(
-            image_paths=val_image_paths,
-            mask_paths=val_mask_paths,
-            instance_prompt=args.instance_prompt,
-            tokenizer=tokenizer,
-            size=args.resolution,
-            black_mask=args.black_mask,
-            discretize_mask=args.discretize_mask,
-        )
-    else:
-        train_image_paths = all_image_paths
-        train_mask_paths = all_mask_paths
-
+    train_image_paths = sorted(list(Path(args.instance_data_dir).iterdir()))
+    train_mask_paths = sorted([Path(args.mask_data_dir) / img.name for img in train_image_paths])
 
     # Training dataset
     train_dataset = MSInpaintingDataset(
@@ -546,10 +424,8 @@ def main():
         batch = {"input_ids": input_ids, "pixel_values": pixel_values, "masks": masks, "masked_images": masked_images}
         return batch
 
-    # Dataloaders
+    # Dataloader
     train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True, collate_fn=collate_fn)
-    if args.val_batch_size != 0:
-        val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=args.val_batch_size, shuffle=False, collate_fn=collate_fn)
 
     logger.info(f"Data loaded successfully. Length of dataset: {len(train_dataset)}. Length of dataloader: {len(train_dataloader)}")
 
@@ -746,9 +622,8 @@ def main():
         accelerator.wait_for_everyone()
 
         # Log images to validate the model
-        if (epoch + 1) % args.validation_epochs == 0: #or global_step % args.validation_steps == 0
+        if (epoch + 1) % args.validation_epochs == 0:
             if accelerator.is_main_process:
-                # validate_model(unet, vae, text_encoder, noise_scheduler, val_dataloader, global_step, accelerator, weight_dtype, logger, args)
                 log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step)
 
     # Create the pipeline using using the trained modules and save it.

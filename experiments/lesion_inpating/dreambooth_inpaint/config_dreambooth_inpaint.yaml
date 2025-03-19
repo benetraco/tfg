@@ -71,16 +71,11 @@ resume_from_checkpoint: "" # Whether training should be resumed from a previous 
 
 log_with: "wandb" # The logger to use. Now only "wandb" is supported.
 
-# using validate_model (bs != 0)
-val_batch_size: 0
-validation_steps: 100  # Log validation every 1000 steps
-validation_epochs: 5 # Run validation every 10 epochs
-
-# using log_validation
 val_input_image_path: "/home/benet/data/VH2D/images/val/flair" # Path to the validation input image (just 1 image).
 val_mask_image_path: "/home/benet/data/VH2D/images/val/mask" # Path to the validation mask image (just 1 image).
 num_validation_images: 4 # Number of validation images to sample.
 validation_prompt: "MS lesion in an axial FLAIR MRI brain scan." # The prompt with identifier specifying the validation instance.
+validation_epochs: 5 # Run validation every 10 epochs
 
 discretize_mask: true # Whether to discretize the input images.
 black_mask: true # Whether to use black lesion masks.
