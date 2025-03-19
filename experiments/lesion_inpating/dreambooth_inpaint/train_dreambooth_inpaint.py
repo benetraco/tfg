@@ -32,6 +32,8 @@ from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version
 
 from sklearn.model_selection import train_test_split
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.13.0.dev0")
@@ -46,7 +48,7 @@ torch.cuda.set_device(0)
 
 def log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step):
     logger.info(
-        f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
+        f"Running validation... Generating {args.num_validation_images} images with prompt:"
         f" {args.validation_prompt}."
     )
     image_transforms_resize_and_crop = transforms.Compose(
@@ -89,27 +91,60 @@ def log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight
 
     # run inference
     generator = None if args.seed is None else torch.Generator(device=accelerator.device).manual_seed(args.seed)
-    images = []
-    images_grey = []
-    images_black = []
+    images, images_grey, images_black = [], [], []
+    mse_losses, mse_losses_grey, mse_losses_black = [], [], []
     for _ in range(args.num_validation_images):
         with torch.autocast("cuda"):
             image = pipeline(args.validation_prompt, image=input_image, mask_image=mask_image, num_inference_steps=25, generator=generator).images[0]
             image_grey = pipeline(args.validation_prompt, image=masked_image_grey, mask_image=mask_image, num_inference_steps=25, generator=generator).images[0]
             image_black = pipeline(args.validation_prompt, image=masked_image_black, mask_image=mask_image, num_inference_steps=25, generator=generator).images[0]
+
+            # if the image size is not the same as the input image, resize it
+            if image.size != input_image.size:
+                image = image.resize(input_image.size)
+            if image_grey.size != input_image.size:
+                image_grey = image_grey.resize(input_image.size)
+            if image_black.size != input_image.size:
+                image_black = image_black.resize(input_image.size)
+
         images.append(image)
         images_grey.append(image_grey)
         images_black.append(image_black)
+
+        # Convert images to tensors for loss calculation
+        input_tensor = transforms.ToTensor()(input_image).unsqueeze(0).to(accelerator.device)
+        image_tensor = transforms.ToTensor()(image).unsqueeze(0).to(accelerator.device)
+        image_grey_tensor = transforms.ToTensor()(image_grey).unsqueeze(0).to(accelerator.device)
+        image_black_tensor = transforms.ToTensor()(image_black).unsqueeze(0).to(accelerator.device)
+
+        # Compute MSE losses
+        mse_loss = F.mse_loss(image_tensor, input_tensor).item()
+        mse_loss_grey = F.mse_loss(image_grey_tensor, input_tensor).item()
+        mse_loss_black = F.mse_loss(image_black_tensor, input_tensor).item()
+
+        mse_losses.append(mse_loss)
+        mse_losses_grey.append(mse_loss_grey)
+        mse_losses_black.append(mse_loss_black)
+
+    # Compute average losses
+    avg_mse_loss = sum(mse_losses) / len(mse_losses)
+    avg_mse_loss_grey = sum(mse_losses_grey) / len(mse_losses_grey)
+    avg_mse_loss_black = sum(mse_losses_black) / len(mse_losses_black)        
 
     for tracker in accelerator.trackers:
         if tracker.name == "wandb":
             tracker.log(
                 {
-                    "Inputs": [wandb.Image(input_image, caption="Input Image"), wandb.Image(mask_image, caption="Mask Image"),
-                               wandb.Image(masked_image_grey, caption="Input Image (Grey)"), wandb.Image(masked_image_black, caption="Input Image (Black)")],
+                    "Inputs": [wandb.Image(input_image, caption="Input Image"),
+                               wandb.Image(mask_image, caption="Mask Image"),
+                               wandb.Image(masked_image_grey, caption="Input Image (Grey)"),
+                               wandb.Image(masked_image_black, caption="Input Image (Black)")],
                     "Validation": [wandb.Image(image, caption=f"{i}: {args.validation_prompt}") for i, image in enumerate(images)],
                     "Validation Grey": [wandb.Image(image, caption=f"{i}: {args.validation_prompt}") for i, image in enumerate(images_grey)],
                     "Validation Black": [wandb.Image(image, caption=f"{i}: {args.validation_prompt}") for i, image in enumerate(images_black)],
+                    "Validation MSE Loss": avg_mse_loss,
+                    "Validation MSE Loss Grey": avg_mse_loss_grey,
+                    "Validation MSE Loss Black": avg_mse_loss_black,
                 },
                 step=global_step,
             )
@@ -517,8 +552,7 @@ def main():
             resume_step = resume_global_step % (num_update_steps_per_epoch * args.gradient_accumulation_steps)
 
     # log_validate before training
-    if args.val_batch_size == 0:
-        log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step)
+    log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step)
 
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train()

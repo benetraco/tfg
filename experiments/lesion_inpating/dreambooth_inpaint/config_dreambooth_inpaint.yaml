@@ -12,13 +12,13 @@ output_dir: "lesion-inpating-dreambooth-model" # The output directory where the 
 
 seed: 17844 # A seed for reproducible training.
 
-resolution: 256 # The resolution for input images.
+resolution: 512 # The resolution for input images.
 
 center_crop: true # Whether to center crop the input images to the resolution.
 
 train_text_encoder: false # Whether to train the text encoder.
 
-train_batch_size: 16 # Batch size (per device) for the training dataloader.
+train_batch_size: 4 # Batch size (per device) for the training dataloader.
 
 # sample_batch_size: 4 # Batch size (per device) for sampling images.
 
@@ -26,7 +26,7 @@ num_train_epochs: 50 # Number of training epochs.
 
 max_train_steps: null # Total number of training steps to perform. If provided, overrides num_train_epochs.
 
-gradient_accumulation_steps: 2 # Number of updates steps to accumulate before performing a backward/update pass.
+gradient_accumulation_steps: 4 # Number of updates steps to accumulate before performing a backward/update pass.
 
 gradient_checkpointing: false # Whether to use gradient checkpointing to save memory.
 
@@ -78,4 +78,4 @@ validation_prompt: "MS lesion in an axial FLAIR MRI brain scan." # The prompt wi
 validation_epochs: 5 # Run validation every 10 epochs
 
 discretize_mask: true # Whether to discretize the input images.
-black_mask: true # Whether to use black lesion masks.
+black_mask: false # Whether to use black lesion masks.
