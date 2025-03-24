@@ -41,9 +41,184 @@ check_min_version("0.13.0.dev0")
 logger = get_logger(__name__)
 
 # Restrict PyTorch to use only GPU X
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 # Set the device to 0 (because it's now the only visible device)
 torch.cuda.set_device(0)
+
+def mse_lesion_loss(image, target, mask):
+    """Compute the MSE loss between the image and target, only considering the lesion area."""
+    return F.mse_loss(image * mask, target * mask)
+
+# Inplementation of validation logging with multiple images from the validation dataset
+def log_validation_dataset(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset):
+    """Validates the model using multiple input images from the validation dataset and logs the results."""
+    logger.info(f"Running validation... \n Generating {args.num_validation_images} images per input.")
+
+
+    pipeline = DiffusionPipeline.from_pretrained(
+        args.pretrained_model_name_or_path,
+        text_encoder=accelerator.unwrap_model(text_encoder),
+        tokenizer=tokenizer,
+        unet=accelerator.unwrap_model(unet),
+        vae=vae,
+        torch_dtype=weight_dtype,
+        safety_checker=None,
+    )
+    pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
+    pipeline = pipeline.to(accelerator.device)
+    pipeline.set_progress_bar_config(disable=True)
+
+    generator = None if args.seed is None else torch.Generator(device=accelerator.device).manual_seed(args.seed)
+
+    total_mse_losses, all_logs = [], []
+
+
+    log_pbar = tqdm(total=len(val_dataset), desc="Validation", position=0, leave=True)
+    for j in range(len(val_dataset)):
+
+        # Get the preprocessed tensors for loss
+        input_image_tensor = val_dataset[j]["instance_images"].to(accelerator.device)
+        mask_tensor = val_dataset[j]["lesion_masks"].to(accelerator.device)
+
+        # Use the original unnormalized images for logging and pipeline
+        input_image_pil = val_dataset[j]["PIL_images"]
+        mask_pil = transforms.ToPILImage()(mask_tensor.cpu())  # Convert mask to PIL (if not already)
+
+        images, loss = [], []
+        for _ in range(args.num_validation_images):
+            with torch.autocast("cuda"):
+                image = pipeline(args.validation_prompt, image=input_image_pil, mask_image=mask_pil, num_inference_steps=25, generator=generator).images[0]
+                images.append(image)
+
+                # Resize if needed
+                if image.size != input_image_pil.size:
+                    print(f"Resizing image from {image.size} to {input_image_pil.size}")
+                    image = image.resize(input_image_pil.size)            
+            
+            # Convert images to tensors for loss calculation
+            image_tensor = transforms.ToTensor()(image).unsqueeze(0).to(accelerator.device)
+
+            # Compute masked MSE
+            mse_loss = mse_lesion_loss(image_tensor, input_image_tensor.unsqueeze(0), mask_tensor.unsqueeze(0)).item()
+
+            loss.append(mse_loss)
+
+        avg_mse_loss = sum(loss) / len(loss)
+        total_mse_losses.append(avg_mse_loss)
+
+        if j < args.num_validation_images_to_log:
+            logs = {
+                f"Validation {j}": [
+                    wandb.Image(input_image_pil, caption="Input"),
+                    wandb.Image(mask_pil, caption="Mask")
+                ] + [wandb.Image(img, caption=f"Generated {i}") for i, img in enumerate(images)],  # Flatten the list
+                f"MSE Loss {j}": avg_mse_loss,
+            }
+
+        all_logs.append(logs)
+
+        log_pbar.update(1)
+        log_pbar.set_postfix({"Validation loss": avg_mse_loss})
+
+    log_pbar.close()
+    
+    final_mse_loss = sum(total_mse_losses) / len(total_mse_losses)
+
+    for tracker in accelerator.trackers:
+        if tracker.name == "wandb":
+            for logs in all_logs:
+                tracker.log(logs, step=global_step)
+            tracker.log({"Validation loss": final_mse_loss}, step = global_step)
+        else:
+            raise ValueError(f"Tracker '{accelerator.tracker.name}' is not supported for validation logging.")
+
+    del pipeline
+    torch.cuda.empty_cache()
+
+
+# Inplementation of validation logging with multiple images 
+def log_validation_multiple(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step):
+    """Validates the model using multiple input images and logs the results."""
+    logger.info(f"Running validation... \n Generating {args.num_validation_images} images per input.")
+
+    image_transforms_resize_and_crop = transforms.Compose([
+        transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
+        transforms.CenterCrop(args.resolution),
+    ])
+
+    val_input_image_paths = sorted(Path(args.val_input_image_path).glob("*.png"))
+    val_mask_image_paths = sorted(Path(args.val_mask_image_path).glob("*.png"))
+
+    assert len(val_input_image_paths) == len(val_mask_image_paths), "Mismatch between input images and mask images."
+
+    pipeline = DiffusionPipeline.from_pretrained(
+        args.pretrained_model_name_or_path,
+        text_encoder=accelerator.unwrap_model(text_encoder),
+        tokenizer=tokenizer,
+        unet=accelerator.unwrap_model(unet),
+        vae=vae,
+        torch_dtype=weight_dtype,
+        safety_checker=None,
+    )
+    pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
+    pipeline = pipeline.to(accelerator.device)
+    pipeline.set_progress_bar_config(disable=True)
+
+    generator = None if args.seed is None else torch.Generator(device=accelerator.device).manual_seed(args.seed)
+
+    total_mse_losses, all_logs = [], []
+
+    j = 0
+    for val_input_image_path, val_mask_image_path in zip(val_input_image_paths, val_mask_image_paths):
+
+        input_image = image_transforms_resize_and_crop(Image.open(val_input_image_path).convert("RGB"))
+        mask = image_transforms_resize_and_crop(Image.open(val_mask_image_path).convert("RGB"))
+
+        images, loss = [], []
+        for _ in range(args.num_validation_images):
+            with torch.autocast("cuda"):
+                image = pipeline(args.validation_prompt, image=input_image, mask_image=mask, num_inference_steps=25, generator=generator).images[0]
+                images.append(image)
+
+                # if the image size is not the same as the input image, resize it
+                if image.size != input_image.size:
+                    image = image.resize(input_image.size)
+            
+            # Convert images to tensors for loss calculation
+            input_tensor = transforms.ToTensor()(input_image).unsqueeze(0).to(accelerator.device)
+            image_tensor = transforms.ToTensor()(image).unsqueeze(0).to(accelerator.device)
+
+            # Compute MSE losses
+            mse_loss = F.mse_loss(image_tensor, input_tensor).item()
+            loss.append(mse_loss)
+
+        avg_mse_loss = sum(loss) / len(loss)
+        total_mse_losses.append(avg_mse_loss)
+
+        logs = {
+            f"Validation {j}": [
+                wandb.Image(input_image, caption=f"Input {val_input_image_path.name}"),
+                wandb.Image(mask, caption=f"Mask {val_mask_image_path.name}")
+            ] + [wandb.Image(img, caption=f"Generated {i}") for i, img in enumerate(images)],  # Flatten the list
+            f"MSE Loss {j}": avg_mse_loss,
+        }
+
+        all_logs.append(logs)
+
+        j += 1
+
+    final_mse_loss = sum(total_mse_losses) / len(total_mse_losses)
+
+    for tracker in accelerator.trackers:
+        if tracker.name == "wandb":
+            for logs in all_logs:
+                tracker.log(logs, step=global_step)
+            tracker.log({"Final MSE Loss": final_mse_loss}, step = global_step)
+        else:
+            raise ValueError(f"Tracker '{accelerator.tracker.name}' is not supported for validation logging.")
+
+    del pipeline
+    torch.cuda.empty_cache()
 
 
 def log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step):
@@ -435,7 +610,7 @@ def main():
     train_mask_paths = sorted([Path(args.mask_data_dir) / img.name for img in train_image_paths])
 
     # Training dataset
-    train_dataset = MSInpaintingDataset(
+    full_dataset = MSInpaintingDataset(
         image_paths=train_image_paths,
         mask_paths=train_mask_paths,
         instance_prompt=args.instance_prompt,
@@ -444,6 +619,11 @@ def main():
         black_mask=args.black_mask,
         discretize_mask=args.discretize_mask,
     )
+
+    # Split the dataset into training and validation sets
+    train_indices, val_indices = train_test_split(list(range(len(full_dataset))), test_size=args.validation_split, random_state=args.seed)
+    train_dataset = torch.utils.data.Subset(full_dataset, train_indices)
+    val_dataset = torch.utils.data.Subset(full_dataset, val_indices)
 
     def collate_fn(examples):
         input_ids = [example["instance_prompt_ids"] for example in examples]
@@ -524,6 +704,7 @@ def main():
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
+    logger.info(f"  Masked image black: {args.black_mask}")
     global_step = 0
     first_epoch = 0
 
@@ -552,7 +733,8 @@ def main():
             resume_step = resume_global_step % (num_update_steps_per_epoch * args.gradient_accumulation_steps)
 
     # log_validate before training
-    log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step)
+    # log_validation_multiple(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step)
+    log_validation_dataset(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset)
 
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train()
@@ -658,7 +840,8 @@ def main():
         # Log images to validate the model
         if (epoch + 1) % args.validation_epochs == 0:
             if accelerator.is_main_process:
-                log_validation(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step)
+                # log_validation_multiple(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step)
+                log_validation_dataset(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset)
 
     # Create the pipeline using using the trained modules and save it.
     if accelerator.is_main_process:

@@ -2,9 +2,9 @@ pretrained_model_name_or_path: "stable-diffusion-v1-5/stable-diffusion-inpaintin
                               # maybe "sd-legacy/stable-diffusion-inpainting" or "runwayml/stable-diffusion-inpainting" 
 tokenizer_name: "" # Pretrained tokenizer name or path if not the same as model_name.
 
-instance_data_dir: "/home/benet/data/VH2D/images/train/flair" # A folder containing the training data of instance images.
+instance_data_dir: "/home/benet/data/VH2D/images/all/flair" # A folder containing the training data of instance images.
 
-mask_data_dir: "/home/benet/data/VH2D/images/train/mask" # A folder containing the training data of mask images.
+mask_data_dir: "/home/benet/data/VH2D/images/all/mask" # A folder containing the training data of mask images.
 
 instance_prompt: "MS lesion in an axial FLAIR MRI brain scan." # The prompt with identifier specifying the instance.
                 # "Axial FLAIR MRI scan of the human brain with an MS lesion."
@@ -16,7 +16,7 @@ resolution: 512 # The resolution for input images.
 
 center_crop: true # Whether to center crop the input images to the resolution.
 
-train_text_encoder: false # Whether to train the text encoder.
+train_text_encoder: true # Whether to train the text encoder.
 
 train_batch_size: 4 # Batch size (per device) for the training dataloader.
 
@@ -74,6 +74,8 @@ log_with: "wandb" # The logger to use. Now only "wandb" is supported.
 val_input_image_path: "/home/benet/data/VH2D/images/val/flair" # Path to the validation input image (just 1 image).
 val_mask_image_path: "/home/benet/data/VH2D/images/val/mask" # Path to the validation mask image (just 1 image).
 num_validation_images: 4 # Number of validation images to sample.
+num_validation_images_to_log: 4 # Number of validation images to log.
+validation_split: 0.1 # The validation split.
 validation_prompt: "MS lesion in an axial FLAIR MRI brain scan." # The prompt with identifier specifying the validation instance.
 validation_epochs: 5 # Run validation every 10 epochs
 
