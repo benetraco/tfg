@@ -8,7 +8,7 @@ mask_data_dir: "/home/benet/data/VH2D/images/all/mask" # A folder containing the
 
 instance_prompt: "MS lesion in an axial FLAIR MRI brain scan." # The prompt with identifier specifying the instance.
                 # "Axial FLAIR MRI scan of the human brain with an MS lesion."
-output_dir: "lesion-inpating-dreambooth-model" # The output directory where the model predictions and checkpoints will be written.
+output_dir: "lesion-inpating-dreambooth-model-new" # The output directory where the model predictions and checkpoints will be written.
 
 seed: 17844 # A seed for reproducible training.
 
@@ -66,7 +66,7 @@ checkpointing_steps: 250 # Save a checkpoint of the training state every X updat
 
 checkpoints_total_limit: null # Max number of checkpoints to store.
 
-resume_from_checkpoint: "" # Whether training should be resumed from a previous checkpoint.
+resume_from_checkpoint: "latest" # Whether training should be resumed from a previous checkpoint.
 
 
 log_with: "wandb" # The logger to use. Now only "wandb" is supported.
