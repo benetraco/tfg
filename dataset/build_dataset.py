@@ -322,7 +322,85 @@ class LatentImageProcessor:
             print(f"{len(latent_files)} latent images saved in {self.output_dir}")
 
 
+class MRILesionDatasetBuilder:
+    def __init__(self, data_folder="/home/benet/data", input_folder="VH", output_folder="lesion2D", folders=["train", "test"], 
+                 flair_image="flair.nii.gz", mask_image="lesionMask.nii.gz", slices_per_example=13, slices_step=1, start_slice=85):
+        self.data_folder = data_folder
+        self.input_folder = os.path.join(data_folder, input_folder)
+        self.output_folder = os.path.join(data_folder, output_folder)
+        self.folders = folders
+        self.flair_image = flair_image
+        self.mask_image = mask_image
+        self.slices_per_example = slices_per_example
+        self.slices_step = slices_step
+        self.start_slice = start_slice
+        self._create_output_dirs()
+    
+    def _create_output_dirs(self):
+        """Creates necessary output directories."""
+        sub_dirs = ["train/flair", "train/mask", "test/flair", "test/mask"]
+        for sub_dir in sub_dirs:
+            os.makedirs(os.path.join(self.output_folder, sub_dir), exist_ok=True)
+    
+    def build_dataset(self):
+        """Processes all specified folders (train/test)."""
+        empty_masks = 0
+        for folder in self.folders:
+            folder_path = os.path.join(self.input_folder, folder)
+            examples = sorted(os.listdir(folder_path))
+            
+            for example in examples:
+                empty_masks += self._process_example(folder_path, example, folder)
+        
+        print(f"Total empty masks skipped: {empty_masks}")
+        # count how many training and test examples we have
+        train_count = len(os.listdir(os.path.join(self.output_folder, "train/flair")))
+        test_count = len(os.listdir(os.path.join(self.output_folder, "test/flair")))
+        print(f"Total examples: {train_count + test_count}, train examples: {train_count} ({train_count/(train_count + test_count) * 100:.2f}%), test examples: {test_count} ({test_count/(train_count + test_count) * 100:.2f}%)")
+    
+    def _process_example(self, folder_path, example, folder):
+        """Processes a single example folder."""
+        example_path = os.path.join(folder_path, example)
+        if not os.path.isdir(example_path):
+            print(f"Skipping {example_path}")
+            return
+        
+        flair_path = os.path.join(example_path, self.flair_image)
+        mask_path = os.path.join(example_path, self.mask_image)
+        flair_data, mask_data = self._load_nifti_images(flair_path, mask_path)
+        
+        return self._save_slices(example, flair_data, mask_data, folder)   
+      
+    def _load_nifti_images(self, flair_path, mask_path):
+        """Loads NIfTI images and returns their data arrays."""
+        flair = nib.load(flair_path).get_fdata()
+        mask = nib.load(mask_path).get_fdata()
+        assert flair.shape == mask.shape, "Flair and Mask shapes do not match!"
+        return flair, mask
+    
+    def _save_slices(self, example, flair_data, mask_data, folder):
+        """Extracts and saves slices as PNG files."""
+        end_slice = self.start_slice + self.slices_per_example * self.slices_step
+        empty_masks = 0
+        for j, i in enumerate(range(self.start_slice, end_slice, self.slices_step)):
+            flair_slice = np.rot90(flair_data[:, :, i])
+            mask_slice = np.rot90(mask_data[:, :, i])
+            
+            # If mask_slice is empty, skip saving
+            if np.sum(mask_slice) == 0:
+                print(f"Skipping empty mask for {folder} {example} at slice {i}")
+                empty_masks += 1
+                continue
 
+            self._save_image(flair_slice, "flair", example, j, folder)
+            self._save_image(mask_slice, "mask", example, j, folder)
+
+        return empty_masks
+    
+    def _save_image(self, slice_data, image_type, example, index, folder):
+        """Saves a single image slice as PNG."""
+        path = os.path.join(self.output_folder, folder, image_type, f"{example}_{index}.png")
+        plt.imsave(path, slice_data, cmap="gray")
 
 ##### Example Usage of the MRIDatasetBuilder
 # data_folder = "/home/benet/data"
