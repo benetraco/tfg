@@ -194,7 +194,7 @@ def prepare_mask_and_masked_image(image, mask, black_mask=True, discretize_mask=
 
 
 def parse_args():
-    config_path = "config_dreambooth_inpaint.yaml"
+    config_path = "config_hist.yaml"
     
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Config file '{config_path}' not found.")
