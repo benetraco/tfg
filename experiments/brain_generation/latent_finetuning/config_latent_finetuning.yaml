@@ -7,12 +7,12 @@ processing:
   dataset: "/home/benet/data/VH2D/latent_flair_scaled"
   # dataset: "/home/benet/data/Healthy2D/CamCAN/latent"
   # image size
-  resolution: 32
+  resolution: 64
   # interpolation: "BILINEAR"
   # # normalisation
   # normalisation_value: 4095.0
   # batch size for dataloader
-  batch_size: 16
+  batch_size: 8
   # number of workers for dataloader
   num_workers: 4 # 0 means no extra processes are used (run in main process)
 
@@ -26,7 +26,7 @@ prompt: "Axial FLAIR MRI scan of the human brain" # Prompt for the model
 training:
   num_epochs: 50 # Number of epochs to train for
   gradient_accumulation:
-    steps: 2 # Number of gradient accumulation steps
+    steps: 4 # Number of gradient accumulation steps
   mixed_precision:
     type: 'no' # Type of mixed precision to use
   gradient_clip:

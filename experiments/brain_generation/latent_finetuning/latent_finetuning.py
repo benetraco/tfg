@@ -1,5 +1,7 @@
 from pathlib import Path
 import os, sys
+# Restrict PyTorch to use only GPU X
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import gc
 import yaml
 import math
