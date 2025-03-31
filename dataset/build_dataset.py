@@ -327,16 +327,28 @@ class LatentImageProcessor:
 class MRILesionDatasetBuilder:
     def __init__(self, data_folder="/home/benet/data", input_folder="VH", output_folder="lesion2D", folders=["train", "test"], 
                  flair_image="flair.nii.gz", mask_image="lesionMask.nii.gz", slices_per_example=13, slices_step=1, start_slice=85):
-        self.data_folder = data_folder
-        self.input_folder = os.path.join(data_folder, input_folder)
-        self.output_folder = os.path.join(data_folder, output_folder)
-        self.folders = folders
-        self.flair_image = flair_image
-        self.mask_image = mask_image
-        self.slices_per_example = slices_per_example
-        self.slices_step = slices_step
-        self.start_slice = start_slice
-        self._create_output_dirs()
+        if input_folder == "VH":
+            self.data_folder = data_folder
+            self.input_folder = os.path.join(data_folder, input_folder)
+            self.output_folder = os.path.join(data_folder, output_folder)
+            self.folders = folders
+            self.flair_image = flair_image
+            self.mask_image = mask_image
+            self.slices_per_example = slices_per_example
+            self.slices_step = slices_step
+            self.start_slice = start_slice
+            self._create_output_dirs()
+        elif input_folder == "SHIFT":
+            self.data_folder = data_folder
+            self.input_folder = os.path.join(data_folder, input_folder)
+            self.output_folder = os.path.join(data_folder, output_folder)
+            self.folders = folders
+            self.flair_image = flair_image
+            self.mask_image = mask_image
+            self.slices_per_example = slices_per_example
+            self.slices_step = slices_step
+            self.start_slice = start_slice
+            self._create_output_dirs()
     
     def _create_output_dirs(self):
         """Creates necessary output directories."""
@@ -359,7 +371,7 @@ class MRILesionDatasetBuilder:
         train_count = len(os.listdir(os.path.join(self.output_folder, "train/flair")))
         test_count = len(os.listdir(os.path.join(self.output_folder, "test/flair")))
         print(f"Total examples: {train_count + test_count}, train examples: {train_count} ({train_count/(train_count + test_count) * 100:.2f}%), test examples: {test_count} ({test_count/(train_count + test_count) * 100:.2f}%)")
-    
+
     def _process_example(self, folder_path, example, folder):
         """Processes a single example folder."""
         example_path = os.path.join(folder_path, example)
@@ -401,7 +413,19 @@ class MRILesionDatasetBuilder:
     
     def _save_image(self, slice_data, image_type, example, index, folder):
         """Saves a single image slice as PNG."""
-        path = os.path.join(self.output_folder, folder, image_type, f"{example}_{index}.png")
+        if self.input_folder == "VH":
+            path = os.path.join(self.output_folder, folder, image_type, f"{example}_{index}.png")
+        elif self.input_folder == "SHIFT":
+            # The SHIFT dataset has a different folder structure
+            if folder == "train" or folder == "dev_in" or folder == "dev_out":
+                path = os.path.join(self.output_folder, folder, image_type, f"{example}_{index}.png")
+            elif folder == "eval_in":
+                path = os.path.join(self.output_folder, "test", image_type, f"{example}_{index}.png")
+            else:
+                raise ValueError(f"Unknown folder: {folder}, only train, dev_in, dev_out and eval_in are supported.")
+        else:
+            raise ValueError(f"Unknown input folder: {self.input_folder}")
+               
         plt.imsave(path, slice_data, cmap="gray")
 
 ##### Example Usage of the MRIDatasetBuilder
