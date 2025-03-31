@@ -1,5 +1,7 @@
 #Libraries
 import os
+# Restrict PyTorch to use only GPU X
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import numpy as np
 import nibabel as nib
 import matplotlib.pyplot as plt
