@@ -325,30 +325,21 @@ class LatentImageProcessor:
 
 
 class MRILesionDatasetBuilder:
-    def __init__(self, data_folder="/home/benet/data", input_folder="VH", output_folder="lesion2D", folders=["train", "test"], 
-                 flair_image="flair.nii.gz", mask_image="lesionMask.nii.gz", slices_per_example=13, slices_step=1, start_slice=85):
-        if input_folder == "VH":
-            self.data_folder = data_folder
-            self.input_folder = input_folder
-            self.output_folder = os.path.join(data_folder, output_folder)
-            self.folders = folders
-            self.flair_image = flair_image
-            self.mask_image = mask_image
-            self.slices_per_example = slices_per_example
-            self.slices_step = slices_step
-            self.start_slice = start_slice
-            self._create_output_dirs()
-        elif input_folder == "SHIFTS_preprocessedMNI":
-            self.data_folder = data_folder
-            self.input_folder = input_folder
-            self.output_folder = os.path.join(data_folder, output_folder)
-            self.folders = folders
-            self.flair_image = flair_image
-            self.mask_image = mask_image
-            self.slices_per_example = slices_per_example
-            self.slices_step = slices_step
-            self.start_slice = start_slice
-            self._create_output_dirs()
+    def __init__(self, data_folder="/home/benet/data", input_folder="VH", output_folder="lesion2D", folders=["train", "test"], flair_image="flair.nii.gz",
+                 mask_image="lesionMask.nii.gz", slices_per_example=13, slices_step=1, start_slice=85, train_split=0.7, seed=17844):
+        self.data_folder = data_folder
+        self.input_folder = input_folder
+        self.output_folder = os.path.join(data_folder, output_folder)
+        self.folders = folders
+        self.flair_image = flair_image
+        self.mask_image = mask_image
+        self.slices_per_example = slices_per_example
+        self.slices_step = slices_step
+        self.start_slice = start_slice
+        self.train_split = train_split
+        self.seed = seed
+        np.random.seed(seed)
+        self._create_output_dirs()
     
     def _create_output_dirs(self):
         """Creates necessary output directories."""
@@ -359,23 +350,38 @@ class MRILesionDatasetBuilder:
     def build_dataset(self):
         """Processes all specified folders (train/test)."""
         empty_masks, train_count, test_count = 0, 0, 0
-        for folder in self.folders:
-            folder_path = os.path.join(self.data_folder, self.input_folder, folder)
-            examples = sorted(os.listdir(folder_path))
-            
-            if self.input_folder == "VH":
+        if self.input_folder == "VH":
+            train_examples, test_examples = 0, 0
+            total_examples = sum(len(os.listdir(os.path.join(self.data_folder, self.input_folder, folder))) for folder in self.folders)
+            for folder in self.folders:
+                folder_path = os.path.join(self.data_folder, self.input_folder, folder)
+                examples = sorted(os.listdir(folder_path))
+                
                 for example in examples:
-                    example_empty_masks = self._process_example(folder_path, example, folder)
+                    if train_examples >= total_examples * self.train_split:
+                        train_test = "test"
+                        example_empty_masks = self._process_example(folder_path, example, folder, train_test)
+                    elif test_examples >= total_examples * (1 - self.train_split):
+                        train_test = "train"
+                        example_empty_masks = self._process_example(folder_path, example, folder, train_test)
+                    else:
+                        train_test = folder
+                        example_empty_masks = self._process_example(folder_path, example, folder, train_test)
+                    
                     empty_masks += example_empty_masks
                     increment = self.slices_per_example - example_empty_masks
-                    train_count += (folder == "train") * increment
-                    test_count += (folder == "test") * increment
+                    train_count += (train_test == "train") * increment
+                    test_count += (train_test == "test") * increment
+                    train_examples += (train_test == "train")
+                    test_examples += (train_test == "test")
 
-            elif self.input_folder == "SHIFTS_preprocessedMNI":
-                # randomize the examples order
+        elif self.input_folder == "SHIFTS_preprocessedMNI":
+            for folder in self.folders:
+                folder_path = os.path.join(self.data_folder, self.input_folder, folder)
+                examples = os.listdir(folder_path)
                 np.random.shuffle(examples)
-                examples_train = examples[:int(len(examples) * 0.7)]
-                examples_test = examples[int(len(examples) * 0.7):]
+                examples_train = examples[:int(len(examples) * self.train_split)]
+                examples_test = examples[int(len(examples) * self.train_split):]
                 for example in examples_train:
                     example_empty_masks = self._process_example(folder_path, example, folder, "train")
                     empty_masks += example_empty_masks
@@ -384,7 +390,26 @@ class MRILesionDatasetBuilder:
                     example_empty_masks = self._process_example(folder_path, example, folder, "test")
                     empty_masks += example_empty_masks
                     test_count += self.slices_per_example - example_empty_masks
+
+        elif self.input_folder == "WMH2017_preprocessedMNI":
+            folder_path = os.path.join(self.data_folder, self.input_folder)
+            examples = os.listdir(folder_path)
+            np.random.shuffle(examples)
+            examples_train = examples[:int(len(examples) * self.train_split)]
+            examples_test = examples[int(len(examples) * self.train_split):]
+            for example in examples_train:
+                example_empty_masks = self._process_example(folder_path, example, None, "train")
+                empty_masks += example_empty_masks
+                train_count += self.slices_per_example - example_empty_masks
+            for example in examples_test:
+                example_empty_masks = self._process_example(folder_path, example, None, "test")
+                empty_masks += example_empty_masks
+                test_count += self.slices_per_example - example_empty_masks
         
+        else:
+            print(f"Unknown input folder: {self.input_folder}, only 'VH' and 'SHIFTS_preprocessedMNI' and 'WMH2017_preprocessedMNI' are supported.")
+            return
+                
         print(f"Total empty masks skipped: {empty_masks}")
 
         print(f"In the preprocessed folder: Total examples: {train_count + test_count}, train examples: {train_count} ({train_count/(train_count + test_count) * 100:.2f}%), test examples: {test_count} ({test_count/(train_count + test_count) * 100:.2f}%)")
@@ -435,9 +460,11 @@ class MRILesionDatasetBuilder:
     def _save_image(self, slice_data, image_type, example, index, folder, train_test=None):
         """Saves a single image slice as PNG."""
         if self.input_folder == "VH": # VH dataset folder is already train/test
-            path = os.path.join(self.output_folder, folder, image_type, f"{self.input_folder}_{example}_{index}.png")
+            path = os.path.join(self.output_folder, train_test, image_type, f"{self.input_folder}_{example}_{index}.png")
         elif self.input_folder == "SHIFTS_preprocessedMNI":
             path = os.path.join(self.output_folder, train_test, image_type, f"{folder}_{example}_{index}.png")
+        elif self.input_folder == "WMH2017_preprocessedMNI":
+            path = os.path.join(self.output_folder, train_test, image_type, f"{self.input_folder}_{example}_{index}.png")
         else:
             raise ValueError(f"Unknown input folder: {self.input_folder}")
                
