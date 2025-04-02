@@ -329,7 +329,7 @@ class MRILesionDatasetBuilder:
                  flair_image="flair.nii.gz", mask_image="lesionMask.nii.gz", slices_per_example=13, slices_step=1, start_slice=85):
         if input_folder == "VH":
             self.data_folder = data_folder
-            self.input_folder = os.path.join(data_folder, input_folder)
+            self.input_folder = input_folder
             self.output_folder = os.path.join(data_folder, output_folder)
             self.folders = folders
             self.flair_image = flair_image
@@ -338,9 +338,9 @@ class MRILesionDatasetBuilder:
             self.slices_step = slices_step
             self.start_slice = start_slice
             self._create_output_dirs()
-        elif input_folder == "SHIFT":
+        elif input_folder == "SHIFTS_preprocessedMNI":
             self.data_folder = data_folder
-            self.input_folder = os.path.join(data_folder, input_folder)
+            self.input_folder = input_folder
             self.output_folder = os.path.join(data_folder, output_folder)
             self.folders = folders
             self.flair_image = flair_image
@@ -358,21 +358,42 @@ class MRILesionDatasetBuilder:
     
     def build_dataset(self):
         """Processes all specified folders (train/test)."""
-        empty_masks = 0
+        empty_masks, train_count, test_count = 0, 0, 0
         for folder in self.folders:
-            folder_path = os.path.join(self.input_folder, folder)
+            folder_path = os.path.join(self.data_folder, self.input_folder, folder)
             examples = sorted(os.listdir(folder_path))
             
-            for example in examples:
-                empty_masks += self._process_example(folder_path, example, folder)
+            if self.input_folder == "VH":
+                for example in examples:
+                    example_empty_masks = self._process_example(folder_path, example, folder)
+                    empty_masks += example_empty_masks
+                    increment = self.slices_per_example - example_empty_masks
+                    train_count += (folder == "train") * increment
+                    test_count += (folder == "test") * increment
+
+            elif self.input_folder == "SHIFTS_preprocessedMNI":
+                # randomize the examples order
+                np.random.shuffle(examples)
+                examples_train = examples[:int(len(examples) * 0.7)]
+                examples_test = examples[int(len(examples) * 0.7):]
+                for example in examples_train:
+                    example_empty_masks = self._process_example(folder_path, example, folder, "train")
+                    empty_masks += example_empty_masks
+                    train_count += self.slices_per_example - example_empty_masks
+                for example in examples_test:
+                    example_empty_masks = self._process_example(folder_path, example, folder, "test")
+                    empty_masks += example_empty_masks
+                    test_count += self.slices_per_example - example_empty_masks
         
         print(f"Total empty masks skipped: {empty_masks}")
-        # count how many training and test examples we have
-        train_count = len(os.listdir(os.path.join(self.output_folder, "train/flair")))
-        test_count = len(os.listdir(os.path.join(self.output_folder, "test/flair")))
-        print(f"Total examples: {train_count + test_count}, train examples: {train_count} ({train_count/(train_count + test_count) * 100:.2f}%), test examples: {test_count} ({test_count/(train_count + test_count) * 100:.2f}%)")
 
-    def _process_example(self, folder_path, example, folder):
+        print(f"In the preprocessed folder: Total examples: {train_count + test_count}, train examples: {train_count} ({train_count/(train_count + test_count) * 100:.2f}%), test examples: {test_count} ({test_count/(train_count + test_count) * 100:.2f}%)")
+
+        train_count_total = len(os.listdir(os.path.join(self.output_folder, "train/flair")))
+        test_count_total = len(os.listdir(os.path.join(self.output_folder, "test/flair")))
+        print(f"In the hole dataset: Total examples: {train_count_total + test_count_total}, train examples: {train_count_total} ({train_count_total/(train_count_total + test_count_total) * 100:.2f}%), test examples: {test_count_total} ({test_count_total/(train_count_total + test_count_total) * 100:.2f}%)")
+
+    def _process_example(self, folder_path, example, folder, train_test=None):
         """Processes a single example folder."""
         example_path = os.path.join(folder_path, example)
         if not os.path.isdir(example_path):
@@ -383,7 +404,7 @@ class MRILesionDatasetBuilder:
         mask_path = os.path.join(example_path, self.mask_image)
         flair_data, mask_data = self._load_nifti_images(flair_path, mask_path)
         
-        return self._save_slices(example, flair_data, mask_data, folder)   
+        return self._save_slices(example, flair_data, mask_data, folder, train_test)   
       
     def _load_nifti_images(self, flair_path, mask_path):
         """Loads NIfTI images and returns their data arrays."""
@@ -392,7 +413,7 @@ class MRILesionDatasetBuilder:
         assert flair.shape == mask.shape, "Flair and Mask shapes do not match!"
         return flair, mask
     
-    def _save_slices(self, example, flair_data, mask_data, folder):
+    def _save_slices(self, example, flair_data, mask_data, folder, train_test=None):
         """Extracts and saves slices as PNG files."""
         end_slice = self.start_slice + self.slices_per_example * self.slices_step
         empty_masks = 0
@@ -406,23 +427,17 @@ class MRILesionDatasetBuilder:
                 empty_masks += 1
                 continue
 
-            self._save_image(flair_slice, "flair", example, j, folder)
-            self._save_image(mask_slice, "mask", example, j, folder)
+            self._save_image(flair_slice, "flair", example, j, folder, train_test)
+            self._save_image(mask_slice, "mask", example, j, folder, train_test)
 
         return empty_masks
     
-    def _save_image(self, slice_data, image_type, example, index, folder):
+    def _save_image(self, slice_data, image_type, example, index, folder, train_test=None):
         """Saves a single image slice as PNG."""
-        if self.input_folder == "VH":
-            path = os.path.join(self.output_folder, folder, image_type, f"{example}_{index}.png")
-        elif self.input_folder == "SHIFT":
-            # The SHIFT dataset has a different folder structure
-            if folder == "train" or folder == "dev_in" or folder == "dev_out":
-                path = os.path.join(self.output_folder, folder, image_type, f"{example}_{index}.png")
-            elif folder == "eval_in":
-                path = os.path.join(self.output_folder, "test", image_type, f"{example}_{index}.png")
-            else:
-                raise ValueError(f"Unknown folder: {folder}, only train, dev_in, dev_out and eval_in are supported.")
+        if self.input_folder == "VH": # VH dataset folder is already train/test
+            path = os.path.join(self.output_folder, folder, image_type, f"{self.input_folder}_{example}_{index}.png")
+        elif self.input_folder == "SHIFTS_preprocessedMNI":
+            path = os.path.join(self.output_folder, train_test, image_type, f"{folder}_{example}_{index}.png")
         else:
             raise ValueError(f"Unknown input folder: {self.input_folder}")
                
