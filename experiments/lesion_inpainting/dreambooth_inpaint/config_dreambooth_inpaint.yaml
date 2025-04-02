@@ -50,11 +50,11 @@ adam_epsilon: 1e-8 # Epsilon value for the Adam optimizer.
 
 max_grad_norm: 1.0 # Max gradient norm.
 
-push_to_hub: false # Whether to push the model to the Hub.
+push_to_hub: true # Whether to push the model to the Hub.
 
-hub_token: "" # The token to use to push to the Model Hub.
+hub_token: "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" # The token to use to push to the Model Hub.
 
-hub_model_id: "" # The name of the repository to keep in sync with the local `output_dir`.
+hub_model_id: "benetraco/ms-lesion-inpainting-vh-shifts" # The name of the repository to keep in sync with the local `output_dir`.
 
 logging_dir: "logs" # TensorBoard log directory.
 
@@ -62,7 +62,7 @@ mixed_precision: "no" # Whether to use mixed precision (no, fp16, bf16).
 
 local_rank: -1 # For distributed training: local rank.
 
-checkpointing_steps: 250 # Save a checkpoint of the training state every X updates.
+checkpointing_steps: 1000 # Save a checkpoint of the training state every X updates.
 
 checkpoints_total_limit: null # Max number of checkpoints to store.
 
