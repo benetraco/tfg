@@ -8,7 +8,7 @@ mask_data_dir: "/home/benet/data/lesion2D/train/mask" # A folder containing the 
 
 instance_prompt: "MS lesion in an axial FLAIR MRI brain scan." # The prompt with identifier specifying the instance.
                 # "Axial FLAIR MRI scan of the human brain with an MS lesion."
-output_dir: "lesion-inpating-dreambooth-model-traintestall" # The output directory where the model predictions and checkpoints will be written.
+output_dir: "lesion-inpating-dreambooth-model-traintest" # The output directory where the model predictions and checkpoints will be written.
 
 seed: 17844 # A seed for reproducible training.
 
@@ -54,7 +54,7 @@ push_to_hub: true # Whether to push the model to the Hub.
 
 hub_token: "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" # The token to use to push to the Model Hub.
 
-hub_model_id: "benetraco/ms-lesion-inpainting-vh-shifts" # The name of the repository to keep in sync with the local `output_dir`.
+hub_model_id: "benetraco/ms-lesion-inpainting-vh" # The name of the repository to keep in sync with the local `output_dir`.
 
 logging_dir: "logs" # TensorBoard log directory.
 

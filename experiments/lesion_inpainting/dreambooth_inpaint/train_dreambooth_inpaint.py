@@ -7,7 +7,7 @@ from pathlib import Path
 import wandb
 import random
 # Restrict PyTorch to use only GPU X
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 import numpy as np
 import torch
@@ -862,7 +862,7 @@ def main():
 
     # log_validate before training
     # log_validation_multiple(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step)
-    log_validation_dataset(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset)
+    # log_validation_dataset(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset)
 
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train()
@@ -966,10 +966,10 @@ def main():
         accelerator.wait_for_everyone()
 
         # Log images to validate the model
-        if (epoch + 1) % args.validation_epochs == 0:
-            if accelerator.is_main_process:
-                # log_validation_multiple(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step)
-                log_validation_dataset(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset)
+        # if (epoch + 1) % args.validation_epochs == 0:
+        #     if accelerator.is_main_process:
+        #         # log_validation_multiple(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step)
+        #         log_validation_dataset(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset)
 
     # Create the pipeline using using the trained modules and save it.
     if accelerator.is_main_process:
