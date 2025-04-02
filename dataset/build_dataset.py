@@ -464,7 +464,7 @@ class MRILesionDatasetBuilder:
         elif self.input_folder == "SHIFTS_preprocessedMNI":
             path = os.path.join(self.output_folder, train_test, image_type, f"{folder}_{example}_{index}.png")
         elif self.input_folder == "WMH2017_preprocessedMNI":
-            path = os.path.join(self.output_folder, train_test, image_type, f"{self.input_folder}_{example}_{index}.png")
+            path = os.path.join(self.output_folder, train_test, image_type, f"WMH2017_{example}_{index}.png")
         else:
             raise ValueError(f"Unknown input folder: {self.input_folder}")
                
