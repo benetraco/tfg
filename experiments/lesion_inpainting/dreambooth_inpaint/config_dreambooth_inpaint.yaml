@@ -2,25 +2,21 @@ pretrained_model_name_or_path: "stable-diffusion-v1-5/stable-diffusion-inpaintin
                               # maybe "sd-legacy/stable-diffusion-inpainting" or "runwayml/stable-diffusion-inpainting" 
 tokenizer_name: "" # Pretrained tokenizer name or path if not the same as model_name.
 
-instance_data_dir: "/home/benet/data/lesion2D/train/flair" # A folder containing the training data of instance images.
+instance_data_dir: "/home/benet/data/lesion2D_VH-SHIFTS-WMH2017/train/flair" # A folder containing the training data of instance images.
 
-mask_data_dir: "/home/benet/data/lesion2D/train/mask" # A folder containing the training data of mask images.
+mask_data_dir: "/home/benet/data/lesion2D_VH-SHIFTS-WMH2017/train/mask" # A folder containing the training data of mask images.
 
 instance_prompt: "MS lesion in an axial FLAIR MRI brain scan." # The prompt with identifier specifying the instance.
                 # "Axial FLAIR MRI scan of the human brain with an MS lesion."
-output_dir: "lesion-inpating-dreambooth-model-traintest" # The output directory where the model predictions and checkpoints will be written.
+output_dir: "lesion-inpating-dreambooth-model-vh-shifts-wmh2017" # The output directory where the model predictions and checkpoints will be written.
 
 seed: 17844 # A seed for reproducible training.
 
 resolution: 512 # The resolution for input images.
 
-center_crop: true # Whether to center crop the input images to the resolution.
-
 train_text_encoder: true # Whether to train the text encoder.
 
 train_batch_size: 4 # Batch size (per device) for the training dataloader.
-
-# sample_batch_size: 4 # Batch size (per device) for sampling images.
 
 num_train_epochs: 50 # Number of training epochs.
 
@@ -28,7 +24,7 @@ max_train_steps: null # Total number of training steps to perform. If provided, 
 
 gradient_accumulation_steps: 2 # Number of updates steps to accumulate before performing a backward/update pass.
 
-gradient_checkpointing: false # Whether to use gradient checkpointing to save memory.
+gradient_checkpointing: true # Whether to use gradient checkpointing to save memory.
 
 learning_rate: 1.0e-6 #1.0e-4 #5e-6 # Initial learning rate.
 
@@ -54,7 +50,7 @@ push_to_hub: true # Whether to push the model to the Hub.
 
 hub_token: "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" # The token to use to push to the Model Hub.
 
-hub_model_id: "benetraco/ms-lesion-inpainting-vh" # The name of the repository to keep in sync with the local `output_dir`.
+hub_model_id: "benetraco/ms-lesion-inpainting-vh-shifts-wmh2017" # The name of the repository to keep in sync with the local `output_dir`.
 
 logging_dir: "logs" # TensorBoard log directory.
 
@@ -62,23 +58,22 @@ mixed_precision: "no" # Whether to use mixed precision (no, fp16, bf16).
 
 local_rank: -1 # For distributed training: local rank.
 
-checkpointing_steps: 1000 # Save a checkpoint of the training state every X updates.
+checkpointing_steps: 5000 # Save a checkpoint of the training state every X updates.
 
-checkpoints_total_limit: null # Max number of checkpoints to store.
+checkpoints_total_limit: 5 # Max number of checkpoints to store.
 
 resume_from_checkpoint: "latest" # Whether training should be resumed from a previous checkpoint.
 
-
 log_with: "wandb" # The logger to use. Now only "wandb" is supported.
 
-val_input_image_path: "/home/benet/data/lesion2D/test/flair" # Path to the validation input image (just 1 image).
-val_mask_image_path: "/home/benet/data/lesion2D/test/mask" # Path to the validation mask image (just 1 image).
-num_validation_images: 4 # Number of validation images to sample.
-num_validation_images_to_log: 4 # Number of validation images to log.
-validation_batch_size: 4 # Batch size (per device) for the validation dataloader.
-validation_split: 0.1 # The validation split.
+val_input_image_path: "/home/benet/data/lesion2D_VH-SHIFTS-WMH2017/test/flair" # Path to the validation input image (just 1 image).
+
+val_mask_image_path: "/home/benet/data/lesion2D_VH-SHIFTS-WMH2017/test/mask" # Path to the validation mask image (just 1 image).
+
 validation_prompt: "MS lesion in an axial FLAIR MRI brain scan." # The prompt with identifier specifying the validation instance.
+
 validation_epochs: 10 # Run validation every 10 epochs
 
 discretize_mask: true # Whether to discretize the input images.
+
 black_mask: false # Whether to use black lesion masks.
