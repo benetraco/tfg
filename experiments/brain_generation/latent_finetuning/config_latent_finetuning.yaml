@@ -7,7 +7,7 @@ processing:
   dataset: "/home/benet/data/VH2D/latent_flair_scaled"
   # dataset: "/home/benet/data/Healthy2D/CamCAN/latent"
   # image size
-  resolution: 64
+  resolution: 32
   # interpolation: "BILINEAR"
   # # normalisation
   # normalisation_value: 4095.0

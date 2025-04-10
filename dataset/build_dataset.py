@@ -235,6 +235,17 @@ class MRIDataset(Dataset):
 
     def __len__(self):
         return len(self.image_files) // 4 if self.latents else len(self.image_files)
+    
+    def _get_prompt_from_filename(self, filename):
+        """Derive a prompt based on filename patterns."""
+        if "dev" in filename or "eval" in filename or "train" in filename:
+            return "SHIFTS axial FLAIR MRI scan of the human brain"
+        elif "VH" in filename:
+            return "VH axial FLAIR MRI scan of the human brain"
+        elif "WMH2017" in filename:
+            return "WMH2017 axial FLAIR MRI scan of the human brain"
+        else:
+            return "Axial FLAIR MRI scan of the human brain"
 
     def __getitem__(self, idx):
         if self.latents:
@@ -246,7 +257,12 @@ class MRIDataset(Dataset):
                 images = [self.transform(img) for img in images]
             # Stack images along the channel dimension (4, 64, 64)
             latents = torch.cat(images, dim=0)
-            return latents  # Shape: (4, 64, 64)
+            
+            prompt = self._get_prompt_from_filename(img_paths[0])
+
+            return latents, prompt  # return both latent -Shape: (4, 64, 64)- and its corresponding prompt
+
+            # return latents  # Shape: (4, 64, 64)
 
         else:    
             img_path = os.path.join(self.data_dir, self.image_files[idx])
