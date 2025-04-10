@@ -326,7 +326,8 @@ class LatentImageProcessor:
 
 class MRILesionDatasetBuilder:
     def __init__(self, data_folder="/home/benet/data", input_folder="VH", output_folder="lesion2D", folders=["train", "test"], flair_image="flair.nii.gz",
-                 mask_image="lesionMask.nii.gz", slices_per_example=13, slices_step=1, start_slice=85, train_split=0.7, seed=17844):
+                 mask_image="lesionMask.nii.gz", slices_per_example=13, slices_step=1, start_slice=85, train_split=0.7, seed=17844, skip_empty_masks=True,
+                 fill_lesion=False):
         self.data_folder = data_folder
         self.input_folder = input_folder
         self.output_folder = os.path.join(data_folder, output_folder)
@@ -339,6 +340,8 @@ class MRILesionDatasetBuilder:
         self.train_split = train_split
         self.seed = seed
         np.random.seed(seed)
+        self.skip_empty_masks = skip_empty_masks
+        self.fill_lesion = fill_lesion
         self._create_output_dirs()
     
     def _create_output_dirs(self):
@@ -447,10 +450,22 @@ class MRILesionDatasetBuilder:
             mask_slice = np.rot90(mask_data[:, :, i])
             
             # If mask_slice is empty, skip saving
-            if np.sum(mask_slice) == 0:
+            if self.skip_empty_masks and np.sum(mask_slice) == 0:
                 print(f"Skipping empty mask for {folder} {example} at slice {i}")
                 empty_masks += 1
                 continue
+        
+            # If fill_lesion is True, fill the lesion in the flair image with a gray value (0-255)
+            if self.fill_lesion:
+                # mid = (np.max(flair_slice) - np.min(flair_slice)) / 2
+                # mean of flair_slice excuding where pixels are 0
+                # zero_pixels = np.where(flair_slice == 0)
+                # print(f"Number of zero pixels in flair slice: {len(zero_pixels[0])}")
+                mean = np.mean(flair_slice[flair_slice > 0])
+                flair_slice[mask_slice > 0] = mean
+                # print(f"Filling lesion for {folder} {example} at slice {i}")
+                # print the maximum value in the flair slice and the minimum
+                # print(f"Max value in flair slice: {np.max(flair_slice)}, Min value in flair slice: {np.min(flair_slice)}")
 
             self._save_image(flair_slice, "flair", example, j, folder, train_test)
             self._save_image(mask_slice, "mask", example, j, folder, train_test)
