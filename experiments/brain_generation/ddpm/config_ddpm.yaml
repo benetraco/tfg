@@ -73,7 +73,7 @@ saving:
     checkpoint_frequency: 10000 # How often to save checkpoints (in steps)
     saving_frequency: 10 # How often to save the model (in epochs)
   hf:
-    # repo_name: 'Breast_unconditional_64_100' # Name of the HF repo
+    repo_name: 'brain_ddpm_256' # Name of the Hugging Face repo
     # model_card_path: 'experiments/model_card.yaml' # Path to model card
 logging:
   logger_name: 'wandb' # Name of the logger

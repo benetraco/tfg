@@ -263,7 +263,7 @@ def main():
                     )
                 # save model
                 if epoch % config['saving']['local']['saving_frequency'] == 0 or epoch == num_epochs - 1: # if in saving epoch or last one
-                    pipeline.save_pretrained(str(pipeline_dir))
+                    pipeline.save_pretrained(str(pipeline_dir), safe_serialization=True)
                     logger.info(f"Saving model to {pipeline_dir}")
     
     logger.info("Finished training!\n")
