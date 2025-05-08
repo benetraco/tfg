@@ -1,18 +1,9 @@
-# configuration file for the unconditional training
-# tmux session: ddpm256att and ddpm256
-
 # 1. Image processing
 processing:
-  # dataset name
-  dataset: "/home/benet/data/VH2D/images/train/flair" # name of the dataset or directory in repo
-  # dataset: "/home/benet/data/Healthy2D/CamCAN/images"
-  # image size or resolution to resize
-  resolution: 256
-  interpolation: "BILINEAR"
-  # batch size for dataloader
-  batch_size: 4
-  # number of workers for dataloader
-  num_workers: 8 # 0 means no extra processes are used (run in main process)
+  dataset: "/home/benet/data/lesion2D_VH_split/train/flair" # path to the dataset directory
+  resolution: 64 # image size or resolution to resize. Used: 64, 128, 256
+  batch_size: 32 # batch size for dataloader. Used: 32, 16, 4
+  num_workers: 8 # number of workers for dataloader. 0 means no extra processes are used (run in main process)
 
 # 2. Model
 model:
@@ -43,9 +34,9 @@ model:
 
 # 3. Training
 training:
-  num_epochs: 1 # Number of epochs to train for
+  num_epochs: 50 # Number of epochs to train for
   gradient_accumulation:
-    steps: 8 # Number of gradient accumulation steps, change to 2 if bs is 8 and 4 if bs is 4
+    steps: 1 # Number of gradient accumulation steps. Used: 1, 2, 8
   mixed_precision:
     type: 'no'
   gradient_clip:
@@ -69,12 +60,12 @@ training:
 saving:
   local:
     outputs_dir: 'results/pipelines' # Parent directory for saving outputs
-    pipeline_name: 'brain_ddpm_256' # Name of the pipeline
+    pipeline_name: 'brain_ddpm_64' # Name of the pipeline. Used: 'brain_ddpm_64', 'brain_ddpm_128', 'brain_ddpm_256'
     checkpoint_frequency: 10000 # How often to save checkpoints (in steps)
     saving_frequency: 10 # How often to save the model (in epochs)
   hf:
-    repo_name: 'brain_ddpm_256' # Name of the Hugging Face repo
-    # model_card_path: 'experiments/model_card.yaml' # Path to model card
+    repo_name: 'brain_ddpm_64' # Name of the Hugging Face repo. Used: 'brain_ddpm_64', 'brain_ddpm_128', 'brain_ddpm_256'
+    model_card_name: 'card_64.yaml' # Name of the model card. Used: 'card_64.yaml', 'card_128.yaml', 'card_256.yaml'
 logging:
   logger_name: 'wandb' # Name of the logger
   dir_name: 'logs' # Name of the logging directory

@@ -2,7 +2,7 @@
 from pathlib import Path
 import os, sys
 # Restrict PyTorch to use only GPU X
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 repo_path= Path.cwd().resolve()
 while '.gitignore' not in os.listdir(repo_path): # while not in the root of the repo
@@ -41,7 +41,7 @@ from diffusers.utils import check_min_version
 import logging
 from accelerate.logging import get_logger
 from accelerate import Accelerator
-from huggingface_hub import get_full_repo_name, create_repo, upload_folder
+from huggingface_hub import get_full_repo_name, create_repo, upload_folder, HfApi
 
 # import the MRIDataset class from the dataset folder
 from dataset.build_dataset import MRIDataset
@@ -90,7 +90,7 @@ def main():
     # Define the transformations to apply to the images
     preprocess = Compose(
         [
-            Resize(config['processing']['resolution'], interpolation= InterpolationMode.BILINEAR), #getattr(InterpolationMode, config['processing']['interpolation'])),  # Smaller edge is resized to 256 preserving aspect ratio
+            Resize(config['processing']['resolution'], interpolation= InterpolationMode.BILINEAR),  # Smaller edge is resized to 256 preserving aspect ratio
             CenterCrop(config['processing']['resolution']),  # Center crop to the desired squared resolution
             #RandomHorizontalFlip(),  # Horizontal flip may not be a good idea if we want generation only one laterality
             ToTensor(),  # Convert to PyTorch tensor
@@ -272,30 +272,38 @@ def main():
     logger.info("Finished training!\n")
 
     ### 5. Push the model to Hugging Face Hub
-    # Nom del model al Hub de Hugging Face
     hub_model_id = get_full_repo_name(config['saving']['hf']['repo_name'])
 
-    # 1️⃣ - Crear el repositori al Hugging Face (si no existeix)
+    # create repo in HF Hub
     create_repo(hub_model_id, exist_ok=True)
-
-    # 2️⃣ - Definir el directori de sortida
     output_dir = pipeline_dir / "hf_pipeline"
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    # 3️⃣ - Crear el pipeline directament
+    # Save the model to the output directory
     pipeline = DDPMPipeline(unet=model, scheduler=noise_scheduler)
-
-    # 4️⃣ - Guardar el pipeline en format Hugging Face
     pipeline.save_pretrained(str(output_dir))
 
-    # 5️⃣ - Fer l'upload de tota la carpeta
+    # Upload the model to the Hub
     upload_folder(
         repo_id=hub_model_id,
         folder_path=str(output_dir),
         commit_message="End of training - Uploading full pipeline",
         ignore_patterns=["checkpoint-*"]
     )
+
+    # Upload the model card
+    model_card_path = exp_path / config['saving']['hf']['model_card_name']
+    if os.path.exists(model_card_path):
+        api = HfApi()
+        api.upload_file(
+            path_or_fileobj=str(model_card_path),
+            path_in_repo='README.md',
+            repo_id=hub_model_id
+        )
+        logger.info("Model Card successfully uploaded as README.md")
+    else:
+        logger.warning(f"Model Card not found at {model_card_path}")
 
     logger.info(f"Model successfully pushed to https://huggingface.co/{hub_model_id}")
 

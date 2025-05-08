@@ -1,0 +1,55 @@
+---
+license: mit
+tags:
+- pytorch
+- diffusers
+- unconditional-image-generation
+- diffusion-models-class
+- medical-imaging
+- brain-mri
+- multiple-sclerosis
+---
+
+# Brain MRI Synthesis with DDPM (128x128)
+
+This model is a diffusion-based model for unconditional image generation of **brain MRI FLAIR slices** of size **128x128 pixels**.  
+The model was trained using the [DDPM](https://arxiv.org/abs/2006.11239) architecture, with attention mechanisms in the middle of the U-Net.  
+It is trained from scratch on a dataset of brain MRI slices, specifically designed for generating synthetic brain images.
+
+## Training Details
+
+- **Architecture:** DDPM (Denoising Diffusion Probabilistic Model)
+- **Resolution:** 128x128 pixels
+- **Dataset:** Lesion2D VH splitted (FLAIR MRI slices) (70% of the dataset)
+- **Channels:** 1 (grayscale, FLAIR modality)
+- **Epochs:** 50
+- **Batch size:** 16
+- **Optimizer:** AdamW with learning rate of `1.0e-4`
+- **Scheduler:** Cosine with 500 warm-up steps
+- **Gradient Accumulation:** 2 steps
+- **Mixed Precision:** No
+- **Hardware:** Trained on **one NVIDIA GeForce GTX 1080 Ti GPU of 12GB**
+- **Memory Consumption:** Around **11 GB** during training
+
+## U-Net Architecture
+- **Down Blocks:** [DownBlock2D, DownBlock2D, DownBlock2D, AttnDownBlock2D, DownBlock2D]
+- **Up Blocks:** [UpBlock2D, AttnUpBlock2D, UpBlock2D, UpBlock2D]
+- **Layers per Block:** 2
+- **Block Channels:** [128, 128, 256, 256, 512]
+
+## Usage
+You can use the model directly with the `diffusers` library:
+
+```python
+from diffusers import DDPMPipeline
+import torch
+
+# Load the model
+pipeline = DDPMPipeline.from_pretrained("benetraco/brain_ddpm_128")
+pipeline.to("cuda")  # or "cpu"
+
+# Generate an image
+image = pipeline(batch_size=1).images[0]
+
+# Display the image
+image.show()
