@@ -1,6 +1,9 @@
 #Add repo path to the system path
 from pathlib import Path
 import os, sys
+# Restrict PyTorch to use only GPU X
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
 repo_path= Path.cwd().resolve()
 while '.gitignore' not in os.listdir(repo_path): # while not in the root of the repo
     repo_path = repo_path.parent #go up one level
@@ -38,6 +41,7 @@ from diffusers.utils import check_min_version
 import logging
 from accelerate.logging import get_logger
 from accelerate import Accelerator
+from huggingface_hub import get_full_repo_name, create_repo, upload_folder
 
 # import the MRIDataset class from the dataset folder
 from dataset.build_dataset import MRIDataset
@@ -49,8 +53,8 @@ check_min_version("0.15.0.dev0")
 # set the logger
 logger = get_logger(__name__, log_level="INFO") # allow from info level and above
 
-# set cuda device
-torch.cuda.set_device(1)
+# # set cuda device
+# torch.cuda.set_device(1)
 
 ######MAIN######
 def main():
@@ -265,8 +269,36 @@ def main():
                 if epoch % config['saving']['local']['saving_frequency'] == 0 or epoch == num_epochs - 1: # if in saving epoch or last one
                     pipeline.save_pretrained(str(pipeline_dir), safe_serialization=True)
                     logger.info(f"Saving model to {pipeline_dir}")
-    
     logger.info("Finished training!\n")
+
+    ### 5. Push the model to Hugging Face Hub
+    # Nom del model al Hub de Hugging Face
+    hub_model_id = get_full_repo_name(config['saving']['hf']['repo_name'])
+
+    # 1️⃣ - Crear el repositori al Hugging Face (si no existeix)
+    create_repo(hub_model_id, exist_ok=True)
+
+    # 2️⃣ - Definir el directori de sortida
+    output_dir = pipeline_dir / "hf_pipeline"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # 3️⃣ - Crear el pipeline directament
+    pipeline = DDPMPipeline(unet=model, scheduler=noise_scheduler)
+
+    # 4️⃣ - Guardar el pipeline en format Hugging Face
+    pipeline.save_pretrained(str(output_dir))
+
+    # 5️⃣ - Fer l'upload de tota la carpeta
+    upload_folder(
+        repo_id=hub_model_id,
+        folder_path=str(output_dir),
+        commit_message="End of training - Uploading full pipeline",
+        ignore_patterns=["checkpoint-*"]
+    )
+
+    logger.info(f"Model successfully pushed to https://huggingface.co/{hub_model_id}")
+
     # stop tracking
     accelerator.end_training()
 
