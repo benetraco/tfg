@@ -223,11 +223,12 @@ class MRIHealthyDatasetBuilder:
 
 # Custom dataset
 class MRIDataset(Dataset):
-    def __init__(self, data_dir, transform=None, latents=False, RGB=False):
+    def __init__(self, data_dir, transform=None, latents=False, RGB=False, prompt=False):
         self.data_dir = data_dir
         self.transform = transform
         self.latents = latents
         self.RGB = RGB
+        self.prompt = prompt
         if latents:
             self.image_files = sorted([f for f in os.listdir(data_dir) if f.endswith(".npy")])
         else:
@@ -258,11 +259,12 @@ class MRIDataset(Dataset):
             # Stack images along the channel dimension (4, 64, 64)
             latents = torch.cat(images, dim=0)
             
-            prompt = self._get_prompt_from_filename(img_paths[0])
+            if self.prompt:
+                prompt = self._get_prompt_from_filename(img_paths[0])
 
-            return latents, prompt  # return both latent -Shape: (4, 64, 64)- and its corresponding prompt
+                return latents, prompt  # return both latent -Shape: (4, 64, 64)- and its corresponding prompt
 
-            # return latents  # Shape: (4, 64, 64)
+            return latents  # Shape: (4, 64, 64)
 
         else:    
             img_path = os.path.join(self.data_dir, self.image_files[idx])
