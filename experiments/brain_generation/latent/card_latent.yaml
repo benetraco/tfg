@@ -1,0 +1,63 @@
+license: mit
+tags:
+- pytorch
+- diffusers
+- unconditional-image-generation
+- diffusion-models-class
+- medical-imaging
+- brain-mri
+- multiple-sclerosis
+---
+
+# Brain MRI Synthesis with Latent Diffusion (from scratch)
+
+This model is a diffusion-based model for unconditional image generation of **latent representations of brain MRI FLAIR slices**. The model is designed to synthesize high-resolution brain MRI images (256x256 pixels) through a Latent Diffusion process, leveraging a U-Net architecture with ResNet and Attention-based blocks.
+
+## Training Details
+
+- **Architecture:** Latent Diffusion Model (LDM)
+- **Resolution:** Latent resolution of 32x32 to generate 256x256 final images
+- **Dataset:** Lesion2D VH split (FLAIR MRI slices) (70% of the dataset)
+- **Channels:** 4 (latents are multi-channel representations of the original images)
+- **Epochs:** 100
+- **Batch size:** 16
+- **Optimizer:** AdamW with:
+  - Learning Rate: `1.0e-4`
+  - Betas: (0.95, 0.999)
+  - Weight Decay: `1.0e-6`
+  - Epsilon: `1.0e-8`
+- **Scheduler:** Cosine with 500 warm-up steps
+- **Gradient Accumulation:** 1 step
+- **Mixed Precision:** No
+- **Gradient Clipping:** Max norm of 1.0
+- **Noise Scheduler:** Linear schedule with:
+  - `num_train_timesteps`: 1000
+  - `beta_start`: 0.0001
+  - `beta_end`: 0.02
+- **Hardware:** Trained on **NVIDIA GPUs** with a distributed dataloader using 12 workers.
+- **Memory Consumption:** Approx. **2.5 GB** during training.
+
+## U-Net Architecture
+- **Down Blocks:** [DownBlock2D, DownBlock2D, DownBlock2D, DownBlock2D, AttnDownBlock2D, DownBlock2D]
+- **Up Blocks:** [UpBlock2D, AttnUpBlock2D, UpBlock2D, UpBlock2D, UpBlock2D, UpBlock2D]
+- **Layers per Block:** 2
+- **Block Channels:** [128, 128, 256, 256, 512, 512]
+
+The model is designed to learn a compressed representation of the brain MRI images at a latent level, making the synthesis process more memory-efficient while maintaining high fidelity.
+
+## Usage
+You can use the model directly with the `diffusers` library:
+
+```python
+from diffusers import LatentDiffusionPipeline
+import torch
+
+# Load the model
+pipeline = LatentDiffusionPipeline.from_pretrained("benetraco/latent_scratch")
+pipeline.to("cuda")  # or "cpu"
+
+# Generate an image
+image = pipeline(batch_size=1).images[0]
+
+# Display the image
+image.show()

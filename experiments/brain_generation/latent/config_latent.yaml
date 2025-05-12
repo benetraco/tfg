@@ -2,19 +2,10 @@
 # tmux session: latent_noisescheduler and latent_noisescheduler_flair and latent_noisescheduler_flair2 and latent_noisescheduler_flair3 and latent_noisescheduler2
 # 1. Image processing
 processing:
-  # dataset name
-  # dataset: "/home/benet/data/VH2D/latent_flair" # name of the dataset or directory in repo
-  dataset: "/home/benet/data/VH2D/latent_flair_scaled"
-  # dataset: "/home/benet/data/Healthy2D/CamCAN/latent"
-  # image size
-  resolution: 32
-  # interpolation: "BILINEAR"
-  # # normalisation
-  # normalisation_value: 4095.0
-  # batch size for dataloader
-  batch_size: 16
-  # number of workers for dataloader
-  num_workers: 12 # 0 means no extra processes are used (run in main process)
+  dataset: "/home/benet/data/lesion2D_VH_split/train/latent" # path to the dataset directory
+  resolution: 32 # image size or resolution generate the latents. Used: 32 (to generate 256x256 images)
+  batch_size: 16 # batch size for dataloader. Used: 16
+  num_workers: 12 # number of workers for dataloader. 0 means no extra processes are used (run in main process)
 
 # 2. Model
 model:
@@ -45,7 +36,7 @@ model:
 
 # 3. Training
 training:
-  num_epochs: 50 # Number of epochs to train for
+  num_epochs: 100 # Number of epochs to train for
   gradient_accumulation:
     steps: 1 # Number of gradient accumulation steps
   mixed_precision:
@@ -72,18 +63,16 @@ training:
 saving:
   local:
     outputs_dir: 'results/pipelines' # Parent directory for saving outputs
-    pipeline_name: 'latent' # Name of the pipeline
+    pipeline_name: 'latent_scratch' # Name of the pipeline
     checkpoint_frequency: 10000 # How often to save checkpoints (in steps)
     saving_frequency: 10 # How often to save the model (in epochs)
-    vae_name : 'fintuned_vae' # Name of the VAE model
   hf:
-    # repo_name: 'Latent_Breast' # Name of the HF repo
-    # model_card_path: 'model_cards/mc_latent.yaml' # # path from experiment directory
+    repo_name: 'latent_scratch' # Name of the Hugging Face repo.
+    model_card_name: 'card_latent.yaml' # Name of the model card.
 logging:
   logger_name: 'wandb' # Name of the logger
   dir_name: 'logs' # Name of the logging directory
-  # run_name: '40k' # Name of the run
   images:
-    freq_epochs: 5 # How often to save images (in epochs)
+    freq_epochs: 20 # How often to save images (in epochs)
     batch_size: 4 # Batch size for image generation
     scaled: True # Whether the latents were scaled

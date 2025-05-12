@@ -44,6 +44,7 @@ from accelerate import Accelerator
 
 # extra
 from packaging import version
+from huggingface_hub import get_full_repo_name, create_repo, upload_folder, HfApi
 
 # import the MRIDataset class from the dataset folder
 from dataset.build_dataset import MRIDataset
@@ -110,11 +111,11 @@ def main():
     train_dataloader = DataLoader(
         dataset, batch_size=config['processing']['batch_size'], num_workers= config['processing']['num_workers'], shuffle=True
     )
-
+    # print the shape of the dataloader
+    logger.info(f"DataLoader created with {len(train_dataloader)} batches of size {config['processing']['batch_size']}") # show info about the dataloader
 
     ### 2. Model definition
     # Load the VAE model
-    # vae = AutoencoderKL.from_pretrained(repo_path / config['saving']['local']['outputs_dir'] / config['saving']['local']['vae_name'])
     vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae")
     vae.eval() # set the model to evaluation mode
 
@@ -215,7 +216,6 @@ def main():
         pbar = tqdm(total=num_update_steps_per_epoch)
         pbar.set_description(f"Epoch {epoch}")
         for latents in train_dataloader: # Loop over the batches
-
             with accelerator.accumulate(model): # start gradient accumulation
                 noise = torch.randn_like(latents) # Sample noise to add to the images
                 bs = latents.shape[0] # batch size variable for later use
@@ -318,6 +318,44 @@ def main():
                 pipeline.save_pretrained(str(pipeline_dir))
                 logger.info(f"Saving model to {pipeline_dir}")
     logger.info("Finished training!\n")
+    
+    ### 5. Push the model to Hugging Face Hub
+    hub_model_id = get_full_repo_name(config['saving']['hf']['repo_name'])
+
+    # create repo in HF Hub
+    create_repo(hub_model_id, exist_ok=True)
+    output_dir = pipeline_dir / "hf_pipeline"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Save the model to the output directory
+    pipeline = DDPMPipeline(unet=accelerator.unwrap_model(model), scheduler=noise_scheduler)
+    pipeline.save_pretrained(str(output_dir))
+
+    # Upload the model to the Hub
+    upload_folder(
+        repo_id=hub_model_id,
+        folder_path=str(output_dir),
+        commit_message="End of training - Uploading full pipeline",
+        ignore_patterns=["checkpoint-*"]
+    )
+
+    # Upload the model card
+    model_card_path = exp_path / config['saving']['hf']['model_card_name']
+    if os.path.exists(model_card_path):
+        api = HfApi()
+        api.upload_file(
+            path_or_fileobj=str(model_card_path),
+            path_in_repo='README.md',
+            repo_id=hub_model_id
+        )
+        logger.info("Model Card successfully uploaded as README.md")
+    else:
+        logger.warning(f"Model Card not found at {model_card_path}")
+
+    logger.info(f"Model successfully pushed to https://huggingface.co/{hub_model_id}")
+
+    
     # stop tracking
     accelerator.end_training()
     
