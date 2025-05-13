@@ -11,6 +11,8 @@ import yaml
 import torch
 from pathlib import Path
 from diffusers import DDPMPipeline, AutoencoderKL, UNet2DModel, DDPMScheduler
+from tqdm import tqdm
+from torchvision.transforms.functional import to_pil_image
 
 # Path configurations
 repo_path = Path.cwd().resolve()
@@ -31,21 +33,37 @@ def generate_ddpm_images(pipe, num_images=1):
     return images
 
 
-def generate_latent_images(pipe, vae, num_images=1, resolution=256):
+def generate_latent_images(model, noise_scheduler, vae, device, num_images=1, latent_resolution=32):
     """Generate images using a Latent Diffusion Pipeline"""
-    images = []
-    for _ in range(num_images):
-        seed = random.randint(0, 2**32 - 1)  # Generate a random seed
-        generator = torch.manual_seed(seed)
-        latent_inf = pipe(batch_size=1, generator=generator).latent_dist.sample(generator=generator)
-        latent_inf = latent_inf * vae.config.scaling_factor
-        
-        with torch.no_grad():
-            reconstructed = vae.decode(latent_inf / vae.config.scaling_factor).sample
-        images.append(reconstructed.squeeze(0).cpu())
-    
-    return images
 
+    # denoise images
+    latent_inf = torch.randn(num_images,4,latent_resolution,latent_resolution).to(device)
+    latent_inf *= noise_scheduler.init_noise_sigma # init noise is 1.0 in vanilla case
+    # markov chain
+    for t in tqdm(noise_scheduler.timesteps): # markov chain
+        latent_inf = noise_scheduler.scale_model_input(latent_inf, t) # # Apply scaling, no change in vanilla case
+        with torch.no_grad(): # predict the noise residual with the unet
+            noise_pred = model(latent_inf, t).sample
+        latent_inf = noise_scheduler.step(noise_pred, t, latent_inf).prev_sample # compute the previous noisy sample x_t -> x_t-1
+
+    original_latent = latent_inf.clone() # save the original latent for later use
+
+    # load vae    
+    vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae")
+    vae.requires_grad_(False)
+    # send vae to accelerator
+    vae.to(device)
+
+    # first we unscale
+    latent_inf = latent_inf/ vae.config.scaling_factor
+    # decode
+    with torch.no_grad():
+        im = vae.decode(latent_inf).sample
+
+    # select just the first channel (RGB for vae)
+    im = im[:, 0, :, :].unsqueeze(1)
+
+    return im, original_latent
 
 def save_images(images, folder_path):
     if not os.path.exists(folder_path):
@@ -55,8 +73,21 @@ def save_images(images, folder_path):
     current_images = len(os.listdir(folder_path))
     
     for i, image in enumerate(images):
+        # if the image is a tensor, unormalize it and convert it to a PIL image
+        if isinstance(image, torch.Tensor):
+            image = (image + 1) / 2  # Scale to [0, 1]
+            image = image.clamp(0, 1)  # Clamp to [0, 1]
+            image = to_pil_image(image)  # Convert to PIL image
+                
+        
         image.save(os.path.join(folder_path, f"image_{current_images + i}.png"))
 
+# def save_latent_images(images, folder_path):
+#     # show latents
+#     fig, ax = plt.subplots(1,4, figsize=(10,5))
+#     for i in range(4):
+#         ax[i].imshow(latent_inf[0,i].cpu().numpy(), cmap='gray')
+#         ax[i].set_title(f'Latent {i}')
 
 def main():
     ### General setups
@@ -74,10 +105,12 @@ def main():
     print(f"Model type: {model_type}")
     print(f"Generating {num_images} images in {num_batches} batches of size {batch_size}")
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     if model_type == "ddpm":
         # Load the DDPM pipeline
         pipe = DDPMPipeline.from_pretrained("benetraco/" + config['model_name'], torch_dtype=torch.float32)
-        pipe.to("cuda")
+        pipe.to(device)
         
         for i in range(num_batches):
             print(f"Generating batch {i + 1}/{num_batches} for DDPM")
@@ -86,15 +119,18 @@ def main():
 
     elif model_type == "latent":
         # Load the VAE and UNet model
-        vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae").to("cuda")
-        vae.eval()
+        vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae")
+        vae.requires_grad_(False)
+        vae.to(device)
         
         pipe = DDPMPipeline.from_pretrained("benetraco/" + config['model_name'], torch_dtype=torch.float32)
-        pipe.to("cuda")
+        model = pipe.unet
+        model.to(device)
+        noise_scheduler = pipe.scheduler
         
         for i in range(num_batches):
             print(f"Generating batch {i + 1}/{num_batches} for Latent Diffusion")
-            images = generate_latent_images(pipe, vae, num_images=batch_size, resolution=256)
+            images, latents = generate_latent_images(model, noise_scheduler, vae, device, num_images=batch_size)
             save_images(images, os.path.join(exp_path, config['output_dir'], config['model_name']))
 
     else:

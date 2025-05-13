@@ -1,5 +1,5 @@
 model_type: "latent" #"ddpm" or "latent"
-model_name: "latent_scratch" # Name of the model
-num_images: 234 # Number of images to generate
-batch_size: 8 # Batch size for generation. DDPM 16, Latent 8
+model_name: "latent_scratch" # Name of the model 
+num_images: 1000 # Number of images to generate
+batch_size: 32 # Batch size for generation. DDPM 16, Latent 32
 output_dir: "generated_images" # Directory to save generated images

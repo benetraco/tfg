@@ -28,12 +28,9 @@ compute_cmmd = cmmd_main.compute_cmmd
 # Load the LPIPS model
 loss_fn = lpips.LPIPS(net='alex',version='0.1').cuda()
 
-# Paths
-dataset1_path = 'generated_images/brain_ddpm_'
-dataset2_path = 'test_images/'
-
 # Resolutions to evaluate
-resolutions = [64, 128, 256]
+models = ['brain_ddpm_64', 'brain_ddpm_128', 'brain_ddpm_256', 'latent_scratch']
+test_paths = ['64', '128', '256', '256']
 
 # Containers for results
 fid_scores = []
@@ -52,13 +49,13 @@ csv_file = f"evaluation_results/metrics_{timestamp}.csv"
 # Write the headers
 with open(csv_file, mode='w', newline='') as file:
     writer = csv.writer(file)
-    writer.writerow(["Resolution", "FID Score", "CMMD Score", "LPIPS mean", "LPIPS std"])
+    writer.writerow(["Model", "FID Score", "CMMD Score", "LPIPS mean", "LPIPS std"])
 
-# Loop through resolutions and calculate the metrics
-for res in resolutions:
-    print(f"\n--- Evaluation for {res}x{res} images ---")
-    path1 = dataset1_path + str(res)
-    path2 = dataset2_path + str(res)
+# Loop through models and calculate the metrics
+for i, model in enumerate(models):
+    print(f"\n--- Evaluation for {model} model ---")
+    path1 = 'generated_images_orig/' + model #+ '/'
+    path2 = 'test_images/' + test_paths[i] #+ '/'
 
     # Compute FID
     fid_value = fid_score.calculate_fid_given_paths([path1, path2],
@@ -66,12 +63,12 @@ for res in resolutions:
                                                     device='cuda:0',
                                                     dims=2048)
     fid_scores.append(fid_value)
-    print(f"FID score for {res}x{res} images: {fid_value}")
+    print(f"FID score for {model} model: {fid_value}")
 
     # Compute CMMD
     cmmd_value = compute_cmmd(path1, path2, batch_size=32, max_count=-1)
     cmmd_scores.append(cmmd_value)
-    print(f"CMMD score for {res}x{res} images: {cmmd_value}")
+    print(f"CMMD score for {model} model: {cmmd_value}")
 
     # Compute LPIPS
     files1 = os.listdir(path1)
@@ -90,12 +87,12 @@ for res in resolutions:
     std_lpips = distances_tensor.std().item()
     lpips_mean.append(avg_lpips)
     lpips_std.append(std_lpips)
-    print(f"LPIPS for {res}x{res} images: mean {avg_lpips}, std {std_lpips}")
+    print(f"LPIPS for {model} model: mean {avg_lpips}, std {std_lpips}")
     
     # Save to CSV
     with open(csv_file, mode='a', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow([res, fid_value, cmmd_value, avg_lpips, std_lpips])
+        writer.writerow([model, fid_value, cmmd_value, avg_lpips, std_lpips])
 
 print(f"\n✅ Evaluation complete! Results saved to: {csv_file}")
 
@@ -103,7 +100,7 @@ print(f"\n✅ Evaluation complete! Results saved to: {csv_file}")
 fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
 # FID subplot
-axes[0].plot(resolutions, fid_scores, marker='o', color='blue', label='FID Score')
+axes[0].plot(models, fid_scores, marker='o', color='blue', label='FID Score')
 axes[0].set_title('FID Metrics Across Resolutions')
 axes[0].set_xlabel('Resolution (px)')
 axes[0].set_ylabel('FID Score')
@@ -111,7 +108,7 @@ axes[0].grid(True, linestyle='--', alpha=0.7)
 axes[0].legend()
 
 # CMMD subplot
-axes[1].plot(resolutions, cmmd_scores, marker='s', color='green', label='CMMD Score')
+axes[1].plot(models, cmmd_scores, marker='s', color='green', label='CMMD Score')
 axes[1].set_title('CMMD Metrics Across Resolutions')
 axes[1].set_xlabel('Resolution (px)')
 axes[1].set_ylabel('CMMD Score')
@@ -119,7 +116,7 @@ axes[1].grid(True, linestyle='--', alpha=0.7)
 axes[1].legend()
 
 # LPIPS subplot
-axes[2].errorbar(resolutions, lpips_mean, yerr=lpips_std, fmt='o', color='red', label='LPIPS Score')
+axes[2].errorbar(models, lpips_mean, yerr=lpips_std, fmt='o', color='orange', label='LPIPS Score')
 axes[2].set_title('LPIPS Metrics Across Resolutions')
 axes[2].set_xlabel('Resolution (px)')
 axes[2].set_ylabel('LPIPS Score')
