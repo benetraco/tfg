@@ -1,6 +1,6 @@
 # Script that generates data for the evaluation of the brain generation model.
 import os, sys
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 # Script that generates data for the evaluation of the brain generation model.
 

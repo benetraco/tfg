@@ -1,5 +1,5 @@
-model_type: "latent" #"ddpm" or "latent"
-model_name: "latent_scratch" # Name of the model 
+model_type: "ddpm" #"ddpm" or "latent"
+model_name: "brain_ddpm_64" # Name of the model. Supported: "brain_ddpm_64", "brain_ddpm_128", "brain_ddpm_256", "latent_scratch"
 num_images: 1000 # Number of images to generate
-batch_size: 32 # Batch size for generation. DDPM 16, Latent 32
+batch_size: 64 # Batch size for generation. DDPM 16, Latent 32
 output_dir: "generated_images" # Directory to save generated images
