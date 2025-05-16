@@ -1,7 +1,7 @@
 from pathlib import Path
 import os, sys
 # Restrict PyTorch to use only GPU X
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import gc
 import yaml
 import math
@@ -12,12 +12,13 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from torchvision.transforms import Compose, ToTensor
 import wandb
-from diffusers import DDPMScheduler, DDIMScheduler, AutoencoderKL, DiffusionPipeline, DDPMPipeline
+from diffusers import DDPMScheduler, DDIMScheduler, AutoencoderKL, DiffusionPipeline, DDPMPipeline, StableDiffusionPipeline
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version
 import logging
 from accelerate.logging import get_logger
 from accelerate import Accelerator
+from huggingface_hub import HfApi, create_repo, upload_folder, get_full_repo_name
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 from dataset.build_dataset import MRIDataset
 
@@ -25,14 +26,10 @@ check_min_version("0.15.0.dev0")
 logger = get_logger(__name__, log_level="INFO")
 
 # Restrict PyTorch to use only GPU 2
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 # Set the device to 0 (because it's now the only visible device)
 torch.cuda.set_device(0)
-
-# Check if CUDA is properly set
-print(torch.cuda.current_device())  # Should print 0
-print(torch.cuda.get_device_name(0))  # Should print "NVIDIA A30"
 
 class LatentFineTuning:
     def __init__(self, config_path):
@@ -86,7 +83,7 @@ class LatentFineTuning:
         """Load and preprocess the dataset."""
         data_dir = self.repo_path / self.config['processing']['dataset']
         preprocess = Compose([ToTensor()])
-        dataset = MRIDataset(data_dir, transform=preprocess, latents=True)
+        dataset = MRIDataset(data_dir, transform=preprocess, latents=True, prompt=True)
         train_dataloader = DataLoader(
             dataset,
             batch_size=self.config['processing']['batch_size'],
@@ -98,36 +95,63 @@ class LatentFineTuning:
 
 
     def _setup_model(self):
-        """Load the diffusion model and embeddings."""
+        """Load the diffusion model and embeddings, and add new tokens for conditioning."""
         if self.config['logging']['log_reconstructions']:
             vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae")
             vae.eval().to(self.accelerator.device)
+
+        # Load full pipeline
         ldm = DiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4")
+        ldm.to(self.accelerator.device)
+
+        # Add new special tokens
+        new_tokens = ["SHIFTS", "VH", "WMH2017"]
+        num_added_tokens = ldm.tokenizer.add_tokens(new_tokens)
+        ldm.text_encoder.resize_token_embeddings(len(ldm.tokenizer))
+
+        # Freeze entire text encoder except for the new token embeddings
+        for name, param in ldm.text_encoder.named_parameters():
+            param.requires_grad = False
+
+        embedding_layer = ldm.text_encoder.get_input_embeddings()
+        for token in new_tokens:
+            token_id = ldm.tokenizer.convert_tokens_to_ids(token)
+            embedding_layer.weight[token_id].requires_grad = True
+            print(f"Token '{token}' -> ID {token_id}, requires_grad: {embedding_layer.weight[token_id].requires_grad}")
+
         model = ldm.unet.to(self.accelerator.device)
         return model, vae, ldm
 
 
     def _get_embeddings(self, prompt, ldm):
-        """Extract text embeddings from the prompt."""
         tokenizer = ldm.tokenizer
         text_encoder = ldm.text_encoder
         text_inputs = tokenizer(prompt, padding="max_length", max_length=77, return_tensors="pt")
+
+        # Mou els tensors a la GPU
+        text_inputs = {k: v.to(self.accelerator.device) for k, v in text_inputs.items()}
+
         return text_encoder(**text_inputs).last_hidden_state
 
 
     def _setup_training(self):
         """Set up the optimizer, learning rate scheduler, and noise scheduler."""
+        # Get the embedding layer with updated weights
+        embedding_layer = self.ldm.text_encoder.get_input_embeddings()
+
+        # Optimizer: include U-Net and the new token embeddings
         optimizer = torch.optim.AdamW(
-            self.model.parameters(),
+            list(self.model.parameters()) + [embedding_layer.weight],
             lr=self.config['training']['optimizer']['learning_rate'],
             betas=(self.config['training']['optimizer']['beta_1'], self.config['training']['optimizer']['beta_2']),
             weight_decay=self.config['training']['optimizer']['weight_decay'],
             eps=self.config['training']['optimizer']['eps']
         )
-        
+
         num_epochs = self.config['training']['num_epochs']
         num_update_steps_per_epoch = math.ceil(len(self.train_dataloader) / self.config['training']['gradient_accumulation']['steps'])
         max_train_steps = num_epochs * num_update_steps_per_epoch
+
         lr_scheduler = get_scheduler(
             name=self.config['training']['lr_scheduler']['name'],
             optimizer=optimizer,
@@ -151,10 +175,7 @@ class LatentFineTuning:
             noise_scheduler.set_timesteps(self.config['training']['noise_scheduler']['num_inference_timesteps'])
         else:
             raise ValueError("Noise scheduler type not recognized. Please choose between 'DDPM' and 'DDIM'.")
-        
-        # Consider using the noise scheduler from the pretrained model TO BE TRIED
-        # if self.config['training']['noise_scheduler']['use_pretrained']:
-        #     noise_scheduler = DDPMScheduler.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="scheduler")
+
         return optimizer, lr_scheduler, noise_scheduler, num_update_steps_per_epoch
 
 
@@ -184,47 +205,12 @@ class LatentFineTuning:
         logger.info(f'The number of warmup steps is: {self.config["training"]["lr_scheduler"]["num_warmup_steps"]}\n')
         # logger.info(f'The prompt is: {self.config["prompt"]}\n')
 
-
-    # def _save_samples(self):
-    #     """Save the visual samples."""
-    #     # create random noise
-    #     log_bs = self.config['logging']['images']['batch_size'] # batch size for logging
-    #     latent_inf = torch.randn( # Use seed to denoise always the same images
-    #         log_bs, 4, # 4 latent channels
-    #         self.config['processing']['resolution'], self.config['processing']['resolution'],
-    #         generator=torch.manual_seed(17844)
-    #     ).to(self.accelerator.device)
-    #     latent_inf *= self.noise_scheduler.init_noise_sigma # init noise is 1.0 in vanilla case
-    #     # denoise images
-    #     for t in tqdm(self.noise_scheduler.timesteps): # markov chain
-    #         latent_inf = self.noise_scheduler.scale_model_input(latent_inf, t) # # Apply scaling, no change in vanilla case
-    #         with torch.no_grad(): # predict the noise residual with the unet
-    #             noise_pred = self.model(latent_inf, t, encoder_hidden_states=self.text_embeddings.expand(log_bs, -1, -1)).sample
-    #         latent_inf = self.noise_scheduler.step(noise_pred, t, latent_inf).prev_sample # compute the previous noisy sample x_t -> x_t-1
-    #     # log images
-    #     if self.config['logging']['logger_name'] == 'wandb':
-    #         for i in range (4): # log the 4 latent channels
-    #             self.accelerator.get_tracker('wandb').log(
-    #                 {f"latent_{i}": [wandb.Image(latent_inf[b,i], mode='F') for b in range(log_bs)]},
-    #                 step=self.global_step,
-    #             )
-    #         if self.config['logging']['log_reconstructions']:
-    #             # log the decoded images
-    #             if self.config['logging']['images']['scaled']:
-    #                 latent_inf /= self.vae.config.scaling_factor
-    #             reconstructed = self.vae.decode(latent_inf).sample
-    #             # reconstructed = vae.decode(latent_inf, return_dist=False)[0]
-    #             self.accelerator.get_tracker('wandb').log(
-    #                 {"reconstructed": [wandb.Image(reconstructed[b][0], mode='F') for b in range(log_bs)]},
-    #                 step=self.global_step,
-    #             )
-
     def _save_samples(self):
         """Save visual samples using multiple specific prompts."""
         prompts = [
-            "SHIFTS axial FLAIR MRI scan of the human brain",
-            "VH axial FLAIR MRI scan of the human brain",
-            "WMH2017 axial FLAIR MRI scan of the human brain",
+            "SHIFTS FLAIR MRI",
+            "VH FLAIR MRI",
+            "WMH2017 FLAIR MRI",
         ]
         log_bs = self.config['logging']['images']['batch_size']
 
@@ -263,61 +249,15 @@ class LatentFineTuning:
                     step=self.global_step,
                 )
 
-
-
-    # def _save_samples_guidance(self):
-    #     log_bs = self.config['logging']['images']['batch_size']
-    #     guidance_values = [1.0, 3.0, 5.0, 7.5, 10.0]
-
-    #     latent_inf = torch.randn(
-    #         log_bs, 4,  
-    #         self.config['processing']['resolution'], self.config['processing']['resolution'],
-    #         generator=torch.manual_seed(17844)
-    #     ).to(self.accelerator.device) * self.noise_scheduler.init_noise_sigma  
-
-    #     uncond_embeddings = self._get_embeddings("", self.ldm).to(self.accelerator.device)
-
-    #     for guidance_scale in guidance_values:
-    #         latent_guided = latent_inf.clone()  
-    #         for t in tqdm(self.noise_scheduler.timesteps):
-    #             latent_guided = self.noise_scheduler.scale_model_input(latent_guided, t)
-
-    #             with torch.no_grad():
-    #                 noise_pred_uncond = self.model(latent_guided, t, encoder_hidden_states=uncond_embeddings.expand(log_bs, -1, -1)).sample
-    #                 noise_pred_text = self.model(latent_guided, t, encoder_hidden_states=self.text_embeddings.expand(log_bs, -1, -1)).sample
-    #                 noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
-
-    #             latent_guided = self.noise_scheduler.step(noise_pred, t, latent_guided).prev_sample
-
-    #         # Decode & Move to CPU to free GPU memory
-    #         if self.config['logging']['images']['scaled']:
-    #             latent_guided /= self.vae.config.scaling_factor
-    #         reconstructed = self.vae.decode(latent_guided).sample.cpu()  
-    #         # reconstructed = vae.decode(latent_guided, return_dist=False)[0]
-
-    #         # Log images in WandB
-    #         if self.config['logging']['logger_name'] == 'wandb':
-    #             self.accelerator.get_tracker('wandb').log(
-    #                 {f"reconstructed_guidance_{guidance_scale}": 
-    #                     [wandb.Image(reconstructed[b][0], mode='F') for b in range(log_bs)]},
-    #                 step=self.global_step,
-    #             )
-
-    #         # **Free memory**
-    #         del latent_guided, reconstructed, noise_pred, noise_pred_uncond, noise_pred_text  
-    #         torch.cuda.empty_cache()
-    #         gc.collect()
-
-
     def _save_samples_guidance(self):
         """Save samples with classifier-free guidance using multiple prompts."""
         prompts = [
-            "SHIFTS axial FLAIR MRI scan of the human brain",
-            "VH axial FLAIR MRI scan of the human brain",
-            "WMH2017 axial FLAIR MRI scan of the human brain",
+            "SHIFTS FLAIR MRI",
+            "VH FLAIR MRI",
+            "WMH2017 FLAIR MRI",
         ]
         log_bs = self.config['logging']['images']['batch_size']
-        guidance_values = [1.0, 3.0, 5.0, 7.5, 10.0]
+        guidance_values = [0.0, 0.5, 1.0, 2.0, 3.0, 5.0]
 
         uncond_embeddings = self._get_embeddings("", self.ldm).to(self.accelerator.device)
 
@@ -368,6 +308,68 @@ class LatentFineTuning:
         pipeline = DDPMPipeline(unet=self.accelerator.unwrap_model(self.model), scheduler=self.noise_scheduler)
         pipeline.save_pretrained(str(self.pipeline_dir))
         logger.info(f"Saving model to {self.pipeline_dir}")
+
+
+    def _push_to_hub(self):
+        """Push the fine-tuned Stable Diffusion model with all components to Hugging Face Hub."""
+        from huggingface_hub import HfApi, create_repo, upload_folder, get_full_repo_name
+        from diffusers import StableDiffusionPipeline
+
+        config = self.config
+        repo_id = get_full_repo_name(config['saving']['hf']['repo_name'])
+
+        # Create repo if it doesn't exist
+        create_repo(repo_id, exist_ok=True)
+
+        # Save model components to a temp directory
+        output_dir = self.pipeline_dir / "hf_pipeline"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+
+        print("Saving components...")
+        
+        # # Set scheduler config values to ensure future compatibility
+        # self.noise_scheduler.config.steps_offset = 1
+        # self.noise_scheduler.config.clip_sample = False
+
+        # # Save the scheduler config before saving the pipeline
+        # self.noise_scheduler.save_pretrained(output_dir)
+
+        # Create pipeline and save config (links all components together)
+        pipe = StableDiffusionPipeline.from_pretrained(
+            pretrained_model_name_or_path="CompVis/stable-diffusion-v1-4",
+            unet=self.accelerator.unwrap_model(self.model),
+            text_encoder=self.accelerator.unwrap_model(self.ldm.text_encoder),
+            vae=AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae"),
+            scheduler=self.noise_scheduler,
+            tokenizer=self.ldm.tokenizer,
+            safety_checker=None,
+        )
+        pipe.save_pretrained(output_dir)
+
+        # Upload everything
+        print(f"Uploading to Hub at {repo_id}...")
+        upload_folder(
+            repo_id=repo_id,
+            folder_path=str(output_dir),
+            commit_message="Final upload: all components and pipeline",
+            ignore_patterns=["checkpoint-*"]
+        )
+
+        # Upload model card
+        model_card_path = self.exp_path / config['saving']['hf']['model_card_name']
+        if model_card_path.exists():
+            api = HfApi()
+            api.upload_file(
+                path_or_fileobj=str(model_card_path),
+                path_in_repo="README.md",
+                repo_id=repo_id
+            )
+            logger.info("Model card uploaded as README.md")
+        else:
+            logger.warning(f"Model card not found at {model_card_path}")
+
+        logger.info(f"Model successfully pushed to https://huggingface.co/{repo_id}")
 
 
 
@@ -449,16 +451,19 @@ class LatentFineTuning:
             
             # Save the model and visual samples
             if self.accelerator.is_main_process:
-                if epoch  % self.config['logging']['images']['freq_epochs'] == 0 or epoch == self.config['training']['num_epochs'] - 1:
-                    if self.config['logging']['guidance']:
-                        self._save_samples_guidance()
-                    else:
-                        self._save_samples()
+                # if epoch  % self.config['logging']['images']['freq_epochs'] == 0 or epoch == self.config['training']['num_epochs'] - 1:
+                #     if self.config['logging']['guidance']:
+                #         self._save_samples_guidance()
+                #     else:
+                #         self._save_samples()
                     
                 if epoch % self.config['saving']['local']['saving_frequency'] == 0 or epoch == self.config['training']['num_epochs'] - 1:
                     self._save_model()
             
         logger.info("Training complete.")
+
+        self._push_to_hub()
+
         self.accelerator.end_training()
 
 

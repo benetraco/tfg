@@ -240,13 +240,13 @@ class MRIDataset(Dataset):
     def _get_prompt_from_filename(self, filename):
         """Derive a prompt based on filename patterns."""
         if "dev" in filename or "eval" in filename or "train" in filename:
-            return "SHIFTS axial FLAIR MRI scan of the human brain"
+            return "SHIFTS FLAIR MRI"
         elif "VH" in filename:
-            return "VH axial FLAIR MRI scan of the human brain"
+            return "VH FLAIR MRI"
         elif "WMH2017" in filename:
-            return "WMH2017 axial FLAIR MRI scan of the human brain"
+            return "WMH2017 FLAIR MRI"
         else:
-            return "Axial FLAIR MRI scan of the human brain"
+            return "FLAIR MRI"
 
     def __getitem__(self, idx):
         if self.latents:

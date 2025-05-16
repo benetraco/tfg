@@ -1,32 +1,15 @@
-# configuration file for the unconditional training
-# tmux: tmux new -s latent_finetuning
 # 1. Image processing
 processing:
-  # dataset name
-  # dataset: "/home/benet/data/VH2D/latent_flair" # name of the dataset or directory in repo
-  # dataset: "/home/benet/data/VH2D/latent_flair_scaled"
-  dataset: "/home/benet/data/generation2D_VH-SHIFTS-WMH2017/latent_flair_scaled"
-  # image size
-  resolution: 32
-  # interpolation: "BILINEAR"
-  # # normalisation
-  # normalisation_value: 4095.0
-  # batch size for dataloader
-  batch_size: 8
-  # number of workers for dataloader
-  num_workers: 4 # 0 means no extra processes are used (run in main process)
-
-# 2. Prompt
-# prompt: ""
-prompt: "Axial FLAIR MRI scan of the human brain" # Prompt for the model
-# prompt: "A high-resolution axial FLAIR MRI scan of the human brain, showing clear white matter hyperintensities, detailed ventricles, and cortical structures. The image is grayscale with well-defined contrast between cerebrospinal fluid, gray matter, and white matter. No artifacts, clear and medically accurate."
-# prompt: "Axial T1 MRI scan of the human brain" # Prompt for the model
+  dataset: "/home/benet/data/VH-SHIFTS-WMH2017_split/train/latent" # path to the dataset directory
+  resolution: 32 # image size or resolution generate the latents. Used: 32 (to generate 256x256 images)
+  batch_size: 16 # batch size for dataloader. Used: 8
+  num_workers: 4 # number of workers for dataloader. 0 means no extra processes are used (run in main process)
 
 # 3. Training
 training:
-  num_epochs: 50 # Number of epochs to train for
+  num_epochs: 1 # Number of epochs to train for
   gradient_accumulation:
-    steps: 4 # Number of gradient accumulation steps
+    steps: 2 # Number of gradient accumulation steps
   mixed_precision:
     type: 'no' # Type of mixed precision to use
   gradient_clip:
@@ -44,7 +27,7 @@ training:
   noise_scheduler:
     type: "DDPM" # Type of noise scheduler to use, options: "DDIM" or "DDPM"
     num_train_timesteps: 1000
-    beta_schedule: "scaled_linear" #"linear" # originally using "squaredcos_cap_v2", 
+    beta_schedule: "linear" #"scaled_linear" #"linear" # originally using "squaredcos_cap_v2", 
     beta_start: 0.0001 # default 0.0001
     beta_end: 0.02 # default 0.02
 
@@ -57,14 +40,13 @@ saving:
     saving_frequency: 10 # How often to save the model (in epochs)
     vae_name : 'fintuned_vae' # Name of the VAE model
   hf:
-    # repo_name: 'Latent_Breast' # Name of the HF repo
-    # model_card_path: 'model_cards/mc_latent.yaml' # # path from experiment directory
+    repo_name: 'latent_finetuning_prova' # Name of the Hugging Face repo.
+    model_card_name: 'card_latent_finetuning.yaml' # Name of the model card.
 logging:
   logger_name: 'wandb' # Name of the logger
   dir_name: 'logs' # Name of the logging directory
-  # run_name: '40k' # Name of the run
   images:
-    freq_epochs: 5 # How often to save images (in epochs)
+    freq_epochs: 10 # How often to save images (in epochs)
     batch_size: 4 # Batch size for image generation
     scaled: True # Whether to scale the images
   log_reconstructions: True # Whether to log reconstructions
