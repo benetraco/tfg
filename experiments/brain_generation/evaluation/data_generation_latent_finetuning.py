@@ -39,7 +39,7 @@ class GuidedSampler:
 
         for prompt in prompts:
             text_emb = self._get_embeddings(prompt)
-            tag = prompt.split()[0].lower()
+            tag = prompt.split()[0]
 
             for g in guidance_values:
                 outdir = os.path.join(base_output_dir, tag, f"g{g}")
@@ -88,7 +88,7 @@ if __name__ == "__main__":
 
     sampler.sample(
         prompts=["SHIFTS FLAIR MRI", "VH FLAIR MRI", "WMH2017 FLAIR MRI"],
-        guidance_values=[0.0, 1.0, 2.0, 3.0],
+        guidance_values=[0.0, 1.0, 2.0, 3.0, 5.0, 7.0, 10.0],
         images_per_combination=234,
-        base_output_dir="generated_images/latent_finetuning"
+        base_output_dir="generated_images/latent_finetuning_train_embeddings"
     )

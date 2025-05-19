@@ -2,14 +2,14 @@
 processing:
   dataset: "/home/benet/data/VH-SHIFTS-WMH2017_split/train/latent" # path to the dataset directory
   resolution: 32 # image size or resolution generate the latents. Used: 32 (to generate 256x256 images)
-  batch_size: 16 # batch size for dataloader. Used: 8
+  batch_size: 8 # batch size for dataloader. Used: 8
   num_workers: 4 # number of workers for dataloader. 0 means no extra processes are used (run in main process)
 
 # 3. Training
 training:
-  num_epochs: 1 # Number of epochs to train for
+  num_epochs: 50 # Number of epochs to train for
   gradient_accumulation:
-    steps: 2 # Number of gradient accumulation steps
+    steps: 4 # Number of gradient accumulation steps
   mixed_precision:
     type: 'no' # Type of mixed precision to use
   gradient_clip:
@@ -40,7 +40,7 @@ saving:
     saving_frequency: 10 # How often to save the model (in epochs)
     vae_name : 'fintuned_vae' # Name of the VAE model
   hf:
-    repo_name: 'latent_finetuning_prova' # Name of the Hugging Face repo.
+    repo_name: 'latent_finetuning_encoder' # Name of the Hugging Face repo.
     model_card_name: 'card_latent_finetuning.yaml' # Name of the model card.
 logging:
   logger_name: 'wandb' # Name of the logger

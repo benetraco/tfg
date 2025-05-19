@@ -24,7 +24,8 @@ from dataset.build_dataset import MRIDataset
 # ----------------------------
 def parse_args():
     parser = argparse.ArgumentParser(description="Preprocess and save MRI images for testing.")
-    parser.add_argument("--resolution", type=int, required=True, help="Resolution for image preprocessing (e.g., 64, 128, 256)")
+    parser.add_argument("--resolution", type=int, default=256, help="Resolution for image preprocessing (e.g., 64, 128, 256)")
+    parser.add_argument("--dataset", type=str, default="lesion2D_VH_split", help="Dataset name")
     return parser.parse_args()
 
 # ----------------------------
@@ -42,9 +43,6 @@ def save_images(images, output_folder):
 # ----------------------------
 def main():
     args = parse_args()
-    
-    data_dir = repo_path / "/home/benet/data/lesion2D_VH_split/test/flair"
-    output_folder = exp_path / "test_images" / str(args.resolution)
 
     # Image Transformations
     preprocess = Compose([
@@ -52,12 +50,45 @@ def main():
         CenterCrop(args.resolution)
     ])
 
-    # Dataset Initialization
-    dataset = MRIDataset(data_dir, transform=preprocess)
+    if args.dataset == "lesion2D_VH_split":
+        data_dir = repo_path / "/home/benet/data/lesion2D_VH_split/test/flair"
+        output_folder = exp_path / "test_images" / str(args.resolution)
+        dataset = MRIDataset(data_dir, transform=preprocess)
+        save_images(dataset, output_folder)
+        print(f"Images saved to {output_folder}")
 
-    # Save Images
-    save_images(dataset, output_folder)
-    print(f"Images saved to {output_folder}")
+    elif args.dataset == "VH-SHIFTS-WMH2017_split":
+        data_dir = repo_path / "/home/benet/data/VH-SHIFTS-WMH2017_split/test/flair"
+        output_folder = exp_path / "test_images"
+        subdatasets = ["VH", "SHIFTS", "WMH2017"]
+        for subdataset in subdatasets:
+            temp_subfolder = data_dir / subdataset
+            temp_subfolder.mkdir(parents=True, exist_ok=True)
+
+            for image in os.listdir(data_dir):
+                image_path = data_dir / image
+                if not image_path.is_file():
+                    continue
+
+                if subdataset in ["VH", "WMH2017"]:
+                    if subdataset in image:
+                        dst = temp_subfolder / image
+                        if not dst.exists():
+                            os.system(f"cp '{image_path}' '{dst}'")
+                elif subdataset == "SHIFTS":
+                    if "VH" not in image and "WMH2017" not in image:
+                        dst = temp_subfolder / image
+                        if not dst.exists():
+                            os.system(f"cp '{image_path}' '{dst}'")
+            
+            output_subfolder = output_folder / subdataset
+            dataset = MRIDataset(temp_subfolder, transform=preprocess)
+            save_images(dataset, output_subfolder)
+            print(f"Images saved to {output_subfolder}")
+            # remove the temp_subfolder
+            for file in temp_subfolder.iterdir():
+                file.unlink()
+            temp_subfolder.rmdir()
 
 # ----------------------------
 # Entry Point

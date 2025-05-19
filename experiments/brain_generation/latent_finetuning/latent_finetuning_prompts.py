@@ -1,7 +1,7 @@
 from pathlib import Path
 import os, sys
 # Restrict PyTorch to use only GPU X
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import gc
 import yaml
 import math
@@ -41,8 +41,9 @@ class LatentFineTuning:
         self.dataset, self.train_dataloader = self._setup_dataset()
         self.model, self.vae, self.ldm = self._setup_model()
         self.optimizer, self.lr_scheduler, self.noise_scheduler, self.num_update_steps_per_epoch = self._setup_training()
-        self.model, self.optimizer, self.train_dataloader, self.lr_scheduler = self.accelerator.prepare(
-            self.model, self.optimizer, self.train_dataloader, self.lr_scheduler)
+        self.model, self.optimizer, self.train_dataloader, self.lr_scheduler, self.ldm.text_encoder = self.accelerator.prepare(
+            self.model, self.optimizer, self.train_dataloader, self.lr_scheduler, self.ldm.text_encoder
+        )
         self.global_step = 0
 
 
@@ -99,25 +100,37 @@ class LatentFineTuning:
         if self.config['logging']['log_reconstructions']:
             vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae")
             vae.eval().to(self.accelerator.device)
+        else:
+            vae = None
 
         # Load full pipeline
         ldm = DiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4")
         ldm.to(self.accelerator.device)
+        ldm.text_encoder.train()
 
         # Add new special tokens
         new_tokens = ["SHIFTS", "VH", "WMH2017"]
         num_added_tokens = ldm.tokenizer.add_tokens(new_tokens)
         ldm.text_encoder.resize_token_embeddings(len(ldm.tokenizer))
 
-        # Freeze entire text encoder except for the new token embeddings
+        # Unfreeze the full text encoder for training
         for name, param in ldm.text_encoder.named_parameters():
-            param.requires_grad = False
+            param.requires_grad = True
 
         embedding_layer = ldm.text_encoder.get_input_embeddings()
+
+        # Initialize new token embeddings from the "MRI" token
+        base_token = "MRI"
+        base_token_id = ldm.tokenizer.convert_tokens_to_ids(base_token)
+        base_embedding = embedding_layer.weight[base_token_id].detach().clone()
+
         for token in new_tokens:
             token_id = ldm.tokenizer.convert_tokens_to_ids(token)
-            embedding_layer.weight[token_id].requires_grad = True
-            print(f"Token '{token}' -> ID {token_id}, requires_grad: {embedding_layer.weight[token_id].requires_grad}")
+            with torch.no_grad():
+                # Initialize by adding slight noise to differentiate
+                embedding_layer.weight[token_id] = base_embedding + 0.01 * torch.randn_like(base_embedding)
+            # embedding_layer.weight[token_id].requires_grad = True
+            print(f"Token '{token}' -> ID {token_id}, initialized from '{base_token}'")
 
         model = ldm.unet.to(self.accelerator.device)
         return model, vae, ldm
@@ -139,9 +152,11 @@ class LatentFineTuning:
         # Get the embedding layer with updated weights
         embedding_layer = self.ldm.text_encoder.get_input_embeddings()
 
-        # Optimizer: include U-Net and the new token embeddings
+        # Get the parameters to optimize (unet and text encoder)
+        params = list(self.model.parameters()) + list(self.ldm.text_encoder.parameters())
+
         optimizer = torch.optim.AdamW(
-            list(self.model.parameters()) + [embedding_layer.weight],
+            params,
             lr=self.config['training']['optimizer']['learning_rate'],
             betas=(self.config['training']['optimizer']['beta_1'], self.config['training']['optimizer']['beta_2']),
             weight_decay=self.config['training']['optimizer']['weight_decay'],
@@ -300,6 +315,26 @@ class LatentFineTuning:
                 torch.cuda.empty_cache()
                 gc.collect()
 
+    def _log_prompt_similarity(self, step=None):
+        """Log cosine similarities between prompt embeddings to check if they diverge."""
+        prompts = ["SHIFTS FLAIR MRI", "VH FLAIR MRI", "WMH2017 FLAIR MRI"]
+        embeddings = [self._get_embeddings(p, self.ldm).mean(dim=1) for p in prompts]
+
+        sim_shifts_vh = F.cosine_similarity(embeddings[0], embeddings[1], dim=-1).item()
+        sim_shifts_wmh = F.cosine_similarity(embeddings[0], embeddings[2], dim=-1).item()
+        sim_vh_wmh = F.cosine_similarity(embeddings[1], embeddings[2], dim=-1).item()
+
+        if self.config['logging']['logger_name'] == 'wandb':
+            self.accelerator.get_tracker("wandb").log({
+                "cos_sim/shifts-vh": sim_shifts_vh,
+                "cos_sim/shifts-wmh": sim_shifts_wmh,
+                "cos_sim/vh-wmh": sim_vh_wmh,
+            }, step=step if step is not None else self.global_step)
+        else:
+            self.accelerator.print(f"[Step {self.global_step}] Cosine Similarities:")
+            self.accelerator.print(f"  SHIFTS - VH: {sim_shifts_vh:.4f}")
+            self.accelerator.print(f"  SHIFTS - WMH: {sim_shifts_wmh:.4f}")
+            self.accelerator.print(f"  VH - WMH: {sim_vh_wmh:.4f}")
 
     
     def _save_model(self):
@@ -375,6 +410,12 @@ class LatentFineTuning:
 
     def train(self):
         """Training loop for fine-tuning the model."""
+        # Check if the SHIFTS, VH, and WMH2017 tokens are trainable
+        embedding_layer = self.ldm.text_encoder.get_input_embeddings()
+        token_ids = [self.ldm.tokenizer.convert_tokens_to_ids(t) for t in ["SHIFTS", "VH", "WMH2017"]]
+        for token, tid in zip(["SHIFTS", "VH", "WMH2017"], token_ids):
+            print(f"{token}: requires_grad = {embedding_layer.weight[tid].requires_grad}")
+
         self._init_tracker()
         self.model.enable_gradient_checkpointing()
         for epoch in range(self.config['training']['num_epochs']):
@@ -415,9 +456,7 @@ class LatentFineTuning:
                     
                     # Backpropagation
                     self.accelerator.backward(loss, retain_graph=True)
-                    if self.accelerator.sync_gradients: # gradient accumulation
-                        self.accelerator.clip_grad_norm_(self.model.parameters(), max_norm=self.config['training']['gradient_clip']['max_norm'])
-                    
+                                        
                     # Update parameters
                     self.optimizer.step()
                     self.lr_scheduler.step()
@@ -429,6 +468,7 @@ class LatentFineTuning:
                     self.global_step += 1
                     train_loss = np.mean(train_loss)
                     self.accelerator.log({"loss": train_loss, "log-loss": np.log(train_loss)}, step=self.global_step)
+                    self._log_prompt_similarity(step=self.global_step)
 
                     train_loss = [] # reset the loss for the next accumulation
                     
@@ -451,11 +491,11 @@ class LatentFineTuning:
             
             # Save the model and visual samples
             if self.accelerator.is_main_process:
-                # if epoch  % self.config['logging']['images']['freq_epochs'] == 0 or epoch == self.config['training']['num_epochs'] - 1:
-                #     if self.config['logging']['guidance']:
-                #         self._save_samples_guidance()
-                #     else:
-                #         self._save_samples()
+                if epoch  % self.config['logging']['images']['freq_epochs'] == 0 or epoch == self.config['training']['num_epochs'] - 1:
+                    if self.config['logging']['guidance']:
+                        self._save_samples_guidance()
+                    else:
+                        self._save_samples()
                     
                 if epoch % self.config['saving']['local']['saving_frequency'] == 0 or epoch == self.config['training']['num_epochs'] - 1:
                     self._save_model()
