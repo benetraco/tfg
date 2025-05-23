@@ -6,9 +6,9 @@ instance_data_dir: "/home/benet/data/lesion2D_VH-SHIFTS-WMH2017/train/flair" # A
 
 mask_data_dir: "/home/benet/data/lesion2D_VH-SHIFTS-WMH2017/train/mask" # A folder containing the training data of mask images.
 
-instance_prompt: "MS lesion in an axial FLAIR MRI brain scan." # The prompt with identifier specifying the instance.
+instance_prompt: "multiple sclerosis lesion in a FLAIR MRI"
                 # "Axial FLAIR MRI scan of the human brain with an MS lesion."
-output_dir: "lesion-inpating-dreambooth-model-vh-shifts-wmh2017" # The output directory where the model predictions and checkpoints will be written.
+output_dir: "lesion-inpating-dreambooth-model-vh-shifts-wmh2017_v2" # The output directory where the model predictions and checkpoints will be written.
 
 seed: 17844 # A seed for reproducible training.
 
@@ -50,7 +50,7 @@ push_to_hub: true # Whether to push the model to the Hub.
 
 hub_token: "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" # The token to use to push to the Model Hub.
 
-hub_model_id: "benetraco/ms-lesion-inpainting-vh-shifts-wmh2017" # The name of the repository to keep in sync with the local `output_dir`.
+hub_model_id: "benetraco/ms-lesion-inpainting-vh-shifts-wmh2017_v2" # The name of the repository to keep in sync with the local `output_dir`.
 
 logging_dir: "logs" # TensorBoard log directory.
 
@@ -70,7 +70,7 @@ val_input_image_path: "/home/benet/data/lesion2D_VH-SHIFTS-WMH2017/test/flair" #
 
 val_mask_image_path: "/home/benet/data/lesion2D_VH-SHIFTS-WMH2017/test/mask" # Path to the validation mask image (just 1 image).
 
-validation_prompt: "MS lesion in an axial FLAIR MRI brain scan." # The prompt with identifier specifying the validation instance.
+validation_prompt: "multiple sclerosis lesion in a FLAIR MRI" # The prompt with identifier specifying the validation instance.
 
 validation_epochs: 10 # Run validation every 10 epochs
 
