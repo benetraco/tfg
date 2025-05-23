@@ -1,5 +1,7 @@
-import torch
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+
+import torch
 import sys
 import csv
 import random
@@ -26,11 +28,11 @@ from pytorch_fid import fid_score
 
 # Config
 datasets = ["VH", "SHIFTS", "WMH2017"]
-guidance_values = ['g0.0', 'g1.0', 'g2.0', 'g3.0']
+guidance_values = ['g0.0', 'g1.0', 'g2.0', 'g3.0', 'g5.0', 'g7.0', 'g10.0']
 num_images = 234  # Number of generated/test images to compare
 
 # Paths
-base_path = Path("generated_images/latent_finetuning")
+base_path = Path("generated_images/latent_finetuning_train_embeddings")
 test_base_path = Path("test_images")
 output_dir = Path("evaluation_results")
 output_dir.mkdir(exist_ok=True)
@@ -42,13 +44,15 @@ csv_path = output_dir / f"guidance_eval_{timestamp}.csv"
 # Updated results storage and CSV header
 with open(csv_path, mode='w', newline='') as f:
     writer = csv.writer(f)
-    writer.writerow(['GenPrompt', 'TestDataset', 'Guidance', 'FID', 'CMMD', 'LPIPS_mean', 'LPIPS_std'])
+    # writer.writerow(['GenPrompt', 'TestDataset', 'Guidance', 'FID', 'CMMD', 'LPIPS_mean', 'LPIPS_std'])
+    writer.writerow(['GenPrompt', 'TestDataset', 'Guidance', 'FID', 'CMMD', 'LPIPS'])
 
 results = {}
 for gen_ds in datasets:
     for test_ds in datasets:
         key = f"{gen_ds}_vs_{test_ds}"
-        results[key] = {'guidance': [], 'fid': [], 'cmmd': [], 'lpips_mean': [], 'lpips_std': []}
+        # results[key] = {'guidance': [], 'fid': [], 'cmmd': [], 'lpips_mean': [], 'lpips_std': []}
+        results[key] = {'guidance': [], 'fid': [], 'cmmd': [], 'lpips': []}
 
 # Evaluate every combination
 for gen_ds in datasets:
@@ -84,7 +88,7 @@ for gen_ds in datasets:
                 img2 = lpips.im2tensor(lpips.load_image(str(test_path / file2))).cuda()
                 distances.append(loss_fn(img1, img2).item())
             lpips_mean = torch.tensor(distances).mean().item()
-            lpips_std = torch.tensor(distances).std().item()
+            # lpips_std = torch.tensor(distances).std().item()
 
             # Cleanup
             for f in temp_test_dir.iterdir():
@@ -94,13 +98,15 @@ for gen_ds in datasets:
             # Store and log
             with open(csv_path, mode='a', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow([gen_ds, test_ds, g, fid, cmmd, lpips_mean, lpips_std])
+                # writer.writerow([gen_ds, test_ds, g, fid, cmmd, lpips_mean, lpips_std])
+                writer.writerow([gen_ds, test_ds, g, fid, cmmd, lpips_mean])
 
             results[f"{gen_ds}_vs_{test_ds}"]['guidance'].append(g)
             results[f"{gen_ds}_vs_{test_ds}"]['fid'].append(fid)
             results[f"{gen_ds}_vs_{test_ds}"]['cmmd'].append(cmmd)
-            results[f"{gen_ds}_vs_{test_ds}"]['lpips_mean'].append(lpips_mean)
-            results[f"{gen_ds}_vs_{test_ds}"]['lpips_std'].append(lpips_std)
+            results[f"{gen_ds}_vs_{test_ds}"]['lpips'].append(lpips_mean)
+            # results[f"{gen_ds}_vs_{test_ds}"]['lpips_mean'].append(lpips_mean)
+            # results[f"{gen_ds}_vs_{test_ds}"]['lpips_std'].append(lpips_std)
 
 print(f"\n✅ Cross-prompt evaluation complete! Results saved to: {csv_path}")
 
@@ -110,11 +116,12 @@ for metric in ['fid', 'cmmd', 'lpips']:
     for gen_ds in datasets:
         for test_ds in datasets:
             key = f"{gen_ds}_vs_{test_ds}"
-            y_vals = results[key][f'{metric}_mean'] if metric == 'lpips' else results[key][metric]
-            y_errs = results[key]['lpips_std'] if metric == 'lpips' else None
             label = f"{gen_ds}→{test_ds}"
-            plt.errorbar(results[key]['guidance'], y_vals, yerr=y_errs if metric == 'lpips' else None,
-                         label=label, marker='o', capsize=5)
+            # y_vals = results[key][f'{metric}_mean'] if metric == 'lpips' else results[key][metric]
+            # y_errs = results[key]['lpips_std'] if metric == 'lpips' else None
+            # plt.errorbar(results[key]['guidance'], y_vals, yerr=y_errs if metric == 'lpips' else None,
+            #              label=label, marker='o', capsize=5)
+            plt.plot(results[key]['guidance'], results[key][metric], label=label, marker='o')
 
     plt.title(f"{metric.upper()} Score Across Guidance Values (All Prompt/Test Combos)")
     plt.xlabel("Guidance Value")

@@ -1,5 +1,7 @@
-import torch
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+
+import torch
 import sys
 import csv
 import random
@@ -26,11 +28,11 @@ from pytorch_fid import fid_score
 
 # Config
 datasets = ["VH", "SHIFTS", "WMH2017"]
-guidance_values = ['g0.0', 'g1.0', 'g2.0', 'g3.0']
+guidance_values = ['g0.0', 'g1.0', 'g2.0', 'g3.0', 'g5.0', 'g7.0', 'g10.0']
 num_images = 234  # Number of generated/test images to compare
 
 # Paths
-base_path = Path("generated_images/latent_finetuning")
+base_path = Path("generated_images/latent_finetuning_train_embeddings")
 test_base_path = Path("test_images")
 output_dir = Path("evaluation_results")
 output_dir.mkdir(exist_ok=True)
@@ -40,10 +42,12 @@ csv_path = output_dir / f"guidance_eval_{timestamp}.csv"
 # CSV header
 with open(csv_path, mode='w', newline='') as f:
     writer = csv.writer(f)
-    writer.writerow(['Dataset', 'Guidance', 'FID', 'CMMD', 'LPIPS_mean', 'LPIPS_std'])
+    # writer.writerow(['Dataset', 'Guidance', 'FID', 'CMMD', 'LPIPS_mean', 'LPIPS_std'])
+    writer.writerow(['Dataset', 'Guidance', 'FID', 'CMMD', 'LPIPS'])
 
 # Storage for plots
-results = {ds: {'guidance': [], 'fid': [], 'cmmd': [], 'lpips_mean': [], 'lpips_std': []} for ds in datasets}
+# results = {ds: {'guidance': [], 'fid': [], 'cmmd': [], 'lpips_mean': [], 'lpips_std': []} for ds in datasets}
+results = {ds: {'guidance': [], 'fid': [], 'cmmd': [], 'lpips': []} for ds in datasets}
 
 # Loop through datasets and guidance levels
 for ds in datasets:
@@ -82,7 +86,7 @@ for ds in datasets:
             img2 = lpips.im2tensor(lpips.load_image(str(test_path / file2))).cuda()
             distances.append(loss_fn(img1, img2).item())
         lpips_mean = torch.tensor(distances).mean().item()
-        lpips_std = torch.tensor(distances).std().item()
+        # lpips_std = torch.tensor(distances).std().item()
 
         # --- Cleanup temp dir ---
         for f in temp_test_dir.iterdir():
@@ -92,13 +96,15 @@ for ds in datasets:
         # --- Store results ---
         with open(csv_path, mode='a', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([ds, g, fid, cmmd, lpips_mean, lpips_std])
+            # writer.writerow([ds, g, fid, cmmd, lpips_mean, lpips_std])
+            writer.writerow([ds, g, fid, cmmd, lpips_mean])
 
         results[ds]['guidance'].append(g)
         results[ds]['fid'].append(fid)
         results[ds]['cmmd'].append(cmmd)
-        results[ds]['lpips_mean'].append(lpips_mean)
-        results[ds]['lpips_std'].append(lpips_std)
+        results[ds]['lpips'].append(lpips_mean)
+        # results[ds]['lpips_mean'].append(lpips_mean)
+        # results[ds]['lpips_std'].append(lpips_std)
 
 print(f"\n✅ Evaluation complete! Results saved to: {csv_path}")
 
@@ -106,10 +112,11 @@ print(f"\n✅ Evaluation complete! Results saved to: {csv_path}")
 for metric in ['fid', 'cmmd', 'lpips']:
     plt.figure(figsize=(10, 5))
     for ds in datasets:
-        y_vals = results[ds][f'{metric}_mean'] if metric == 'lpips' else results[ds][metric]
-        y_errs = results[ds]['lpips_std'] if metric == 'lpips' else None
-        plt.errorbar(results[ds]['guidance'], y_vals, yerr=y_errs if metric == 'lpips' else None,
-                     label=ds, marker='o', capsize=5)
+        # y_vals = results[ds][f'{metric}_mean'] if metric == 'lpips' else results[ds][metric]
+        # y_errs = results[ds]['lpips_std'] if metric == 'lpips' else None
+        # plt.errorbar(results[ds]['guidance'], y_vals, yerr=y_errs if metric == 'lpips' else None,
+        #              label=ds, marker='o', capsize=5)
+        plt.plot(results[ds]['guidance'], results[ds][metric], label=ds, marker='o')
 
     plt.title(f"{metric.upper()} Score Across Guidance Values")
     plt.xlabel("Guidance Value")
