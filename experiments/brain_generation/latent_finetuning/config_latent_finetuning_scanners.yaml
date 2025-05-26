@@ -1,0 +1,53 @@
+# 1. Image processing
+processing:
+  dataset: "/home/benet/data/biomarkem2D/train/latent" #"/home/benet/data/WMH2017_split/train/latent" # path to the dataset directory
+  resolution: 32 # image size or resolution generate the latents. Used: 32 (to generate 256x256 images)
+  batch_size: 8 # batch size for dataloader. Used: 8
+  num_workers: 4 # number of workers for dataloader. 0 means no extra processes are used (run in main process)
+
+# 3. Training
+training:
+  num_epochs: 100 # Number of epochs to train for
+  gradient_accumulation:
+    steps: 4 # Number of gradient accumulation steps
+  mixed_precision:
+    type: 'no' # Type of mixed precision to use
+  gradient_clip:
+    max_norm: 1.0 # Maximum norm for gradient clipping
+  enable_xformers_memory_efficient_attention: False
+  optimizer:
+    learning_rate: 1.0e-4 # Learning rate for the optimizer
+    beta_1: 0.95 # Beta 1 for the AdamW optimizer
+    beta_2: 0.999 # Beta 2 for the AdamW optimizer
+    weight_decay: 1.0e-6
+    eps: 1.0e-8
+  lr_scheduler:
+    name: "cosine"
+    num_warmup_steps: 500
+  noise_scheduler:
+    type: "DDPM" # Type of noise scheduler to use, options: "DDIM" or "DDPM"
+    num_train_timesteps: 1000
+    beta_schedule: "linear" #"scaled_linear" #"linear" # originally using "squaredcos_cap_v2", 
+    beta_start: 0.0001 # default 0.0001
+    beta_end: 0.02 # default 0.02
+
+# 4. Saving and logging
+saving:
+  local:
+    outputs_dir: 'results/pipelines' # Parent directory for saving outputs
+    pipeline_name: 'latent_finetuned_prompts_scanners_healthy' # Name of the pipeline
+    checkpoint_frequency: 10000 # How often to save checkpoints (in steps)
+    saving_frequency: 10 # How often to save the model (in epochs)
+    vae_name : 'fintuned_vae' # Name of the VAE model
+  hf:
+    repo_name: 'latent_finetuning_scanners_healthy' # Name of the Hugging Face repo.
+    model_card_name: 'card_latent_finetuning.yaml' # Name of the model card.
+logging:
+  logger_name: 'wandb' # Name of the logger
+  dir_name: 'logs' # Name of the logging directory
+  images:
+    freq_epochs: 25 # How often to save images (in epochs)
+    batch_size: 4 # Batch size for image generation
+    scaled: True # Whether to scale the images
+  log_reconstructions: True # Whether to log reconstructions
+  guidance: True # Whether to log guidance

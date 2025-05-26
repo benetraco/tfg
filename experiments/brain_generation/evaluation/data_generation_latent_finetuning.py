@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import torch
 import gc
 from tqdm import tqdm
@@ -8,7 +8,7 @@ from diffusers import StableDiffusionPipeline
 
 
 class GuidedSampler:
-    def __init__(self, model_id="benetraco/latent_finetuning", resolution=32, num_inference_steps=1000,
+    def __init__(self, model_id="benetraco/latent_finetuning", resolution=32, num_inference_steps=999,
                  device="cuda", seed=17844):
         self.device = device
         self.seed = seed
@@ -113,17 +113,20 @@ class GuidedSampler:
 # Example usage:
 if __name__ == "__main__":
     sampler = GuidedSampler(
-        model_id="benetraco/latent_finetuning_encoder",
+        # model_id="benetraco/latent_finetuning_encoder",
+        model_id="benetraco/latent_finetuning_scanners",
         resolution=32,
         num_inference_steps=999
     )
 
     sampler.sample(
         # prompts=["SHIFTS FLAIR MRI", "VH FLAIR MRI", "WMH2017 FLAIR MRI"],
-        prompts=["SHIFTS FLAIR MRI"],
+        # prompts=["Philips FLAIR MRI", "Siemens FLAIR MRI", "GE FLAIR MRI",],
+        prompts=["Philips FLAIR MRI"],
         # guidance_values=[1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 0.0],
-        guidance_values=[10.0],
-        images_per_combination=234,
-        # batch_size=234,
-        base_output_dir="generated_images/latent_finetuning_train_embeddings"
+        guidance_values=[3.0, 5.0, 7.0, 10.0, 0.0],
+        # guidance_values=[10.0],
+        images_per_combination=90,
+        # batch_size=4,
+        base_output_dir="generated_images/latent_finetuning_scanners"
     )

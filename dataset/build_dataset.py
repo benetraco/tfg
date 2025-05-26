@@ -308,7 +308,13 @@ class MRIDatasetScanners(Dataset):
                 return "GE FLAIR MRI"
             else:
                 return "Unknown Scanner FLAIR MRI"
-        else:
+        if "ISI" in filename: # Sta Caterina
+            return "GE FLAIR MRI"
+        if "TSI" in filename: # Trueta
+            return "Philips FLAIR MRI"
+        if "VSI" in filename: # Vall d'Hebron
+            return "Siemens FLAIR MRI"
+        else:   
             return None
 
     def __getitem__(self, idx):

@@ -1,23 +1,45 @@
-### This script preprocesses and saves MRI images for testing.
-# It resizes and crops the images to a specified resolution and saves them in a designated folder.
-
+### Preprocess and save MRI test images with multiple modes including biomarkem2D_by_scanner
 import os
 import sys
 from pathlib import Path
 import argparse
 from torchvision.transforms import Compose, Resize, CenterCrop, InterpolationMode
-    
-repo_path= Path.cwd().resolve()
-while '.gitignore' not in os.listdir(repo_path): # while not in the root of the repo
-    repo_path = repo_path.parent #go up one level
+from PIL import Image
+
+repo_path = Path.cwd().resolve()
+while '.gitignore' not in os.listdir(repo_path):
+    repo_path = repo_path.parent
     print(repo_path)
-    
-sys.path.insert(0,str(repo_path)) if str(repo_path) not in sys.path else None
-exp_path = Path.cwd().resolve() # path to the experiment folder
+
+sys.path.insert(0, str(repo_path)) if str(repo_path) not in sys.path else None
+exp_path = Path.cwd().resolve()
 print(f"Repo Path: {repo_path}")
 print(f"Experiment Path: {exp_path}")
 
 from dataset.build_dataset import MRIDataset
+
+
+# ----------------------------
+# Scanner Classifier
+# ----------------------------
+def get_scanner_from_filename(filename):
+    parts = filename.split("_")
+    if parts[0] == "WMH2017":
+        idx = int(parts[1])
+        if idx < 50:
+            return "Philips"
+        elif idx < 70:
+            return "Siemens"
+        elif idx < 145:
+            return "GE"
+    if "ISI" in filename:
+        return "GE"
+    if "TSI" in filename:
+        return "Philips"
+    if "VSI" in filename:
+        return "Siemens"
+    return None
+
 
 # ----------------------------
 # Argument Parsing
@@ -25,73 +47,149 @@ from dataset.build_dataset import MRIDataset
 def parse_args():
     parser = argparse.ArgumentParser(description="Preprocess and save MRI images for testing.")
     parser.add_argument("--resolution", type=int, default=256, help="Resolution for image preprocessing (e.g., 64, 128, 256)")
-    parser.add_argument("--dataset", type=str, default="lesion2D_VH_split", help="Dataset name")
+    parser.add_argument("--mode", type=str, required=True,
+                        choices=["lesion2D_VH_split", "VH-SHIFTS-WMH2017_split", "WMH2017_by_scanner", "biomarkem2D_by_scanner"],
+                        help="Which test creation strategy to use")
     return parser.parse_args()
 
-# ----------------------------
-# Image Saving Function
-# ----------------------------
-def save_images(images, output_folder):
-    output_folder.mkdir(parents=True, exist_ok=True)
-    existing_images = len(list(output_folder.iterdir()))
-    
-    for idx, image in enumerate(images):
-        image.save(output_folder / f"image_{existing_images + idx}.png")
 
 # ----------------------------
-# Main Processing Function
+# Save PIL images to output folder
+# ----------------------------
+def save_images(images, names, output_folder):
+    output_folder.mkdir(parents=True, exist_ok=True)
+    for image, name in zip(images, names):
+        image.save(output_folder / name)
+
+
+# ----------------------------
+# Mode: lesion2D_VH_split
+# ----------------------------
+def run_vh_split(resolution):
+    data_dir = Path("/home/benet/data/lesion2D_VH_split/test/flair")
+    output_folder = exp_path / "test_images" / str(resolution)
+
+    preprocess = Compose([
+        Resize(resolution, interpolation=InterpolationMode.BILINEAR),
+        CenterCrop(resolution)
+    ])
+
+    dataset = MRIDataset(data_dir, transform=preprocess)
+    save_images(dataset, [f"image_{i}.png" for i in range(len(dataset))], output_folder)
+    print(f"Saved {len(dataset)} images to {output_folder}")
+
+
+# ----------------------------
+# Mode: VH-SHIFTS-WMH2017_split
+# ----------------------------
+def run_multidataset_split(resolution):
+    data_dir = Path("/home/benet/data/VH-SHIFTS-WMH2017_split/test/flair")
+    output_folder = exp_path / "test_images"
+    subdatasets = ["VH", "SHIFTS", "WMH2017"]
+
+    preprocess = Compose([
+        Resize(resolution, interpolation=InterpolationMode.BILINEAR),
+        CenterCrop(resolution)
+    ])
+
+    for subdataset in subdatasets:
+        temp_subfolder = data_dir / subdataset
+        temp_subfolder.mkdir(parents=True, exist_ok=True)
+
+        for image in os.listdir(data_dir):
+            image_path = data_dir / image
+            if not image_path.is_file():
+                continue
+
+            if subdataset == "SHIFTS":
+                if "VH" not in image and "WMH2017" not in image:
+                    os.system(f"cp '{image_path}' '{temp_subfolder / image}'")
+            elif subdataset in image:
+                os.system(f"cp '{image_path}' '{temp_subfolder / image}'")
+
+        dataset = MRIDataset(temp_subfolder, transform=preprocess)
+        save_images(dataset, [f"image_{i}.png" for i in range(len(dataset))], output_folder / subdataset)
+        print(f"Saved {len(dataset)} images to {output_folder / subdataset}")
+
+        # Cleanup
+        for f in temp_subfolder.iterdir():
+            f.unlink()
+        temp_subfolder.rmdir()
+
+
+# ----------------------------
+# Mode: WMH2017_by_scanner
+# ----------------------------
+def run_wmh2017_by_scanner(resolution):
+    input_folder = Path("/home/benet/data/WMH2017_split/test/flair")
+    output_base = exp_path / "test_images"
+
+    preprocess = Compose([
+        Resize(resolution, interpolation=InterpolationMode.BILINEAR),
+        CenterCrop(resolution)
+    ])
+
+    grouped_images = {"Philips": [], "Siemens": [], "GE": []}
+    grouped_names = {"Philips": [], "Siemens": [], "GE": []}
+
+    for file in sorted(input_folder.glob("*.png")):
+        scanner = get_scanner_from_filename(file.name)
+        if scanner in grouped_images:
+            image = Image.open(file).convert("RGB")
+            preprocessed = preprocess(image)
+            grouped_images[scanner].append(preprocessed)
+            grouped_names[scanner].append(file.name)
+
+    for scanner in grouped_images:
+        output_folder = output_base / "WMH2017" / scanner
+        save_images(grouped_images[scanner], grouped_names[scanner], output_folder)
+        print(f"Saved {len(grouped_images[scanner])} images to {output_folder}")
+
+
+# ----------------------------
+# Mode: biomarkem2D_by_scanner
+# ----------------------------
+def run_biomarkem2d_by_scanner(resolution):
+    input_folder = Path("/home/benet/data/biomarkem2D/test/flair")
+    output_base = exp_path / "test_images"
+
+    preprocess = Compose([
+        Resize(resolution, interpolation=InterpolationMode.BILINEAR),
+        CenterCrop(resolution)
+    ])
+
+    grouped_images = {"Philips": [], "Siemens": [], "GE": []}
+    grouped_names = {"Philips": [], "Siemens": [], "GE": []}
+
+    for file in sorted(input_folder.glob("*.png")):
+        scanner = get_scanner_from_filename(file.name)
+        if scanner in grouped_images:
+            image = Image.open(file).convert("RGB")
+            preprocessed = preprocess(image)
+            grouped_images[scanner].append(preprocessed)
+            grouped_names[scanner].append(file.name)
+
+    for scanner in grouped_images:
+        output_folder = output_base / "biomarkem2D" / scanner
+        save_images(grouped_images[scanner], grouped_names[scanner], output_folder)
+        print(f"Saved {len(grouped_images[scanner])} images to {output_folder}")
+
+
+# ----------------------------
+# Main Dispatcher
 # ----------------------------
 def main():
     args = parse_args()
 
-    # Image Transformations
-    preprocess = Compose([
-        Resize(args.resolution, interpolation=InterpolationMode.BILINEAR),
-        CenterCrop(args.resolution)
-    ])
+    if args.mode == "lesion2D_VH_split":
+        run_vh_split(args.resolution)
+    elif args.mode == "VH-SHIFTS-WMH2017_split":
+        run_multidataset_split(args.resolution)
+    elif args.mode == "WMH2017_by_scanner":
+        run_wmh2017_by_scanner(args.resolution)
+    elif args.mode == "biomarkem2D_by_scanner":
+        run_biomarkem2d_by_scanner(args.resolution)
 
-    if args.dataset == "lesion2D_VH_split":
-        data_dir = repo_path / "/home/benet/data/lesion2D_VH_split/test/flair"
-        output_folder = exp_path / "test_images" / str(args.resolution)
-        dataset = MRIDataset(data_dir, transform=preprocess)
-        save_images(dataset, output_folder)
-        print(f"Images saved to {output_folder}")
 
-    elif args.dataset == "VH-SHIFTS-WMH2017_split":
-        data_dir = repo_path / "/home/benet/data/VH-SHIFTS-WMH2017_split/test/flair"
-        output_folder = exp_path / "test_images"
-        subdatasets = ["VH", "SHIFTS", "WMH2017"]
-        for subdataset in subdatasets:
-            temp_subfolder = data_dir / subdataset
-            temp_subfolder.mkdir(parents=True, exist_ok=True)
-
-            for image in os.listdir(data_dir):
-                image_path = data_dir / image
-                if not image_path.is_file():
-                    continue
-
-                if subdataset in ["VH", "WMH2017"]:
-                    if subdataset in image:
-                        dst = temp_subfolder / image
-                        if not dst.exists():
-                            os.system(f"cp '{image_path}' '{dst}'")
-                elif subdataset == "SHIFTS":
-                    if "VH" not in image and "WMH2017" not in image:
-                        dst = temp_subfolder / image
-                        if not dst.exists():
-                            os.system(f"cp '{image_path}' '{dst}'")
-            
-            output_subfolder = output_folder / subdataset
-            dataset = MRIDataset(temp_subfolder, transform=preprocess)
-            save_images(dataset, output_subfolder)
-            print(f"Images saved to {output_subfolder}")
-            # remove the temp_subfolder
-            for file in temp_subfolder.iterdir():
-                file.unlink()
-            temp_subfolder.rmdir()
-
-# ----------------------------
-# Entry Point
-# ----------------------------
 if __name__ == "__main__":
     main()
