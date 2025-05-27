@@ -1,7 +1,7 @@
 from pathlib import Path
 import os, sys
 # Restrict PyTorch to use only GPU X
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import gc
 import yaml
 import math
@@ -21,6 +21,8 @@ from accelerate import Accelerator
 from huggingface_hub import HfApi, create_repo, upload_folder, get_full_repo_name
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 from dataset.build_dataset import MRIDatasetScanners
+
+import time
 
 check_min_version("0.15.0.dev0")
 logger = get_logger(__name__, log_level="INFO")
@@ -411,6 +413,8 @@ class LatentFineTuning:
     def train(self):
         """Training loop for fine-tuning the model."""
         # Check if the 'Philips', 'Siemens', and 'GE' tokens are trainable
+        start_time = time.time()
+        logger.info("Starting training...")
         embedding_layer = self.ldm.text_encoder.get_input_embeddings()
         token_ids = [self.ldm.tokenizer.convert_tokens_to_ids(t) for t in ["Philips", "Siemens", "GE"]]
         for token, tid in zip(["Philips", "Siemens", "GE"], token_ids):
@@ -491,16 +495,18 @@ class LatentFineTuning:
             
             # Save the model and visual samples
             if self.accelerator.is_main_process:
-                if epoch  % self.config['logging']['images']['freq_epochs'] == 0 or epoch == self.config['training']['num_epochs'] - 1:
-                    if self.config['logging']['guidance']:
-                        self._save_samples_guidance()
-                    else:
-                        self._save_samples()
+                # if epoch  % self.config['logging']['images']['freq_epochs'] == 0 or epoch == self.config['training']['num_epochs'] - 1:
+                #     if self.config['logging']['guidance']:
+                #         self._save_samples_guidance()
+                #     else:
+                #         self._save_samples()
                     
                 if epoch % self.config['saving']['local']['saving_frequency'] == 0 or epoch == self.config['training']['num_epochs'] - 1:
                     self._save_model()
             
         logger.info("Training complete.")
+        end_time = time.time()
+        logger.info(f"Total training time: {end_time - start_time:.2f} seconds, {((end_time - start_time) / 60):.2f} minutes.")
 
         self._push_to_hub()
 

@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import torch
 import sys
@@ -27,12 +27,13 @@ loss_fn = lpips.LPIPS(net='alex', version='0.1').cuda()
 from pytorch_fid import fid_score
 
 # Config
-datasets = ["VH", "SHIFTS", "WMH2017"]
+# datasets = ["VH", "SHIFTS", "WMH2017"]
+datasets = ["Siemens", "Philips", "GE"]
 guidance_values = ['g0.0', 'g1.0', 'g2.0', 'g3.0', 'g5.0', 'g7.0', 'g10.0']
-num_images = 234  # Number of generated/test images to compare
+num_images = 90  # Number of generated/test images to compare
 
 # Paths
-base_path = Path("generated_images/latent_finetuning_train_embeddings")
+base_path = Path("generated_images/latent_finetuning_scanners")
 test_base_path = Path("test_images")
 output_dir = Path("evaluation_results")
 output_dir.mkdir(exist_ok=True)

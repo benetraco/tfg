@@ -7,7 +7,7 @@ processing:
 
 # 3. Training
 training:
-  num_epochs: 100 # Number of epochs to train for
+  num_epochs: 200 # Number of epochs to train for
   gradient_accumulation:
     steps: 4 # Number of gradient accumulation steps
   mixed_precision:
