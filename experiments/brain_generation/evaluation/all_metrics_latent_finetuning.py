@@ -29,11 +29,11 @@ from pytorch_fid import fid_score
 # Config
 # datasets = ["VH", "SHIFTS", "WMH2017"]
 datasets = ["Siemens", "Philips", "GE"]
-guidance_values = ['g0.0', 'g1.0', 'g2.0', 'g3.0', 'g5.0', 'g7.0', 'g10.0']
-num_images = 90  # Number of generated/test images to compare
+guidance_values = ['g0.0', 'g1.0', 'g2.0', 'g3.0', 'g5.0'] #, 'g7.0', 'g10.0']
+num_images = 25  # Number of generated/test images to compare
 
 # Paths
-base_path = Path("generated_images/latent_finetuning_scanners")
+base_path = Path("generated_images/latent_finetuning_scanners_healthy")
 test_base_path = Path("test_images")
 output_dir = Path("evaluation_results")
 output_dir.mkdir(exist_ok=True)
@@ -60,6 +60,7 @@ for gen_ds in datasets:
     for test_ds in datasets:
         test_path = test_base_path / test_ds
         test_all_imgs = sorted(os.listdir(test_path))
+        test_all_imgs = [img for img in test_all_imgs if img.endswith('.png') or img.endswith('.jpg')]
 
         for g in guidance_values:
             gen_path = base_path / gen_ds / g
@@ -76,10 +77,10 @@ for gen_ds in datasets:
 
             # FID
             fid = fid_score.calculate_fid_given_paths([str(gen_path), str(temp_test_dir)],
-                                                      batch_size=50, device='cuda:0', dims=2048)
+                                                      batch_size=25, device='cuda:0', dims=2048)
 
             # CMMD
-            cmmd = compute_cmmd(str(gen_path), str(temp_test_dir), batch_size=32, max_count=50)
+            cmmd = compute_cmmd(str(gen_path), str(temp_test_dir), batch_size=25, max_count=50)
             cmmd = cmmd.item() if hasattr(cmmd, 'item') else cmmd
 
             # LPIPS
