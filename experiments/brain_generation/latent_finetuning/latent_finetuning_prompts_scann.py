@@ -1,7 +1,7 @@
 from pathlib import Path
 import os, sys
 # Restrict PyTorch to use only GPU X
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import gc
 import yaml
 import math
@@ -28,7 +28,7 @@ check_min_version("0.15.0.dev0")
 logger = get_logger(__name__, log_level="INFO")
 
 # Restrict PyTorch to use only GPU 2
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 # Set the device to 0 (because it's now the only visible device)
 torch.cuda.set_device(0)
