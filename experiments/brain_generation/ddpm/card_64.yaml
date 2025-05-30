@@ -29,7 +29,7 @@ It is trained from scratch on a dataset of brain MRI slices, specifically design
 - **Gradient Accumulation:** 1 steps
 - **Mixed Precision:** No
 - **Hardware:** Trained on **one NVIDIA GeForce GTX 1080 Ti GPU of 12GB**
-- **Memory Consumption:** Around **11 GB** during training
+- **Memory Consumption:** Around **7 GB** during training
 
 ## U-Net Architecture
 - **Down Blocks:** [DownBlock2D, DownBlock2D, AttnDownBlock2D, DownBlock2D]

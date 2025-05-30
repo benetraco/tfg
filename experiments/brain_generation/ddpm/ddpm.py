@@ -46,6 +46,7 @@ from huggingface_hub import get_full_repo_name, create_repo, upload_folder, HfAp
 # import the MRIDataset class from the dataset folder
 from dataset.build_dataset import MRIDataset
 
+import time
 
 # Check the diffusers version
 check_min_version("0.15.0.dev0")
@@ -181,6 +182,7 @@ def main():
     # global variables (mainly useful for checkpointing)
     global_step = 0
 
+    start_time = time.time()
     #### 3.2 Training loop
     for epoch in range(num_epochs): # Loop over the epochs
         model.train()
@@ -245,31 +247,33 @@ def main():
 
         ##### 4. Saving the model and visual samples
         # generate visual samples to track training performance and save when in saving epoch
-        if accelerator.is_main_process:
-            if epoch % config['logging']['images']['freq_epochs'] == 0 or epoch == num_epochs - 1: # if in saving epoch or last one
-                # unwrape the model
-                model = accelerator.unwrap_model(model)
-                # create pipeline
-                pipeline = DDPMPipeline(unet=model, scheduler=noise_scheduler)
-                # create generator to make generation deterministic
-                generator = torch.Generator(device=pipeline.device).manual_seed(17844)
-                # generate images
-                images = pipeline(
-                    batch_size=config['logging']['images']['batch_size'],
-                    generator=generator,
-                    output_type='numpy' # output as numpy array
-                ).images # get the numpy images
+        # if accelerator.is_main_process:
+        #     if epoch % config['logging']['images']['freq_epochs'] == 0 or epoch == num_epochs - 1: # if in saving epoch or last one
+        #         # unwrape the model
+        #         model = accelerator.unwrap_model(model)
+        #         # create pipeline
+        #         pipeline = DDPMPipeline(unet=model, scheduler=noise_scheduler)
+        #         # create generator to make generation deterministic
+        #         generator = torch.Generator(device=pipeline.device).manual_seed(17844)
+        #         # generate images
+        #         images = pipeline(
+        #             batch_size=config['logging']['images']['batch_size'],
+        #             generator=generator,
+        #             output_type='numpy' # output as numpy array
+        #         ).images # get the numpy images
 
-                if config['logging']['logger_name'] == 'wandb':
-                    accelerator.get_tracker('wandb').log(
-                        {"test_samples": [wandb.Image(image) for image in images], "epoch": epoch},
-                        step=global_step,
-                    )
-                # save model
-                if epoch % config['saving']['local']['saving_frequency'] == 0 or epoch == num_epochs - 1: # if in saving epoch or last one
-                    pipeline.save_pretrained(str(pipeline_dir), safe_serialization=True)
-                    logger.info(f"Saving model to {pipeline_dir}")
+        #         if config['logging']['logger_name'] == 'wandb':
+        #             accelerator.get_tracker('wandb').log(
+        #                 {"test_samples": [wandb.Image(image) for image in images], "epoch": epoch},
+        #                 step=global_step,
+        #             )
+        #         # save model
+        #         if epoch % config['saving']['local']['saving_frequency'] == 0 or epoch == num_epochs - 1: # if in saving epoch or last one
+        #             pipeline.save_pretrained(str(pipeline_dir), safe_serialization=True)
+        #             logger.info(f"Saving model to {pipeline_dir}")
     logger.info("Finished training!\n")
+    end_time = time.time()
+    logger.info(f"Total training time: {end_time - start_time:.2f} seconds, {((end_time - start_time) / 60):.2f} minutes.")
 
     ### 5. Push the model to Hugging Face Hub
     hub_model_id = get_full_repo_name(config['saving']['hf']['repo_name'])

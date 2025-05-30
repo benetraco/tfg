@@ -1,6 +1,9 @@
 #Add repo path to the system path
 from pathlib import Path
 import os, sys
+# Restrict PyTorch to use only GPU X
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+
 repo_path= Path.cwd().resolve()
 while '.gitignore' not in os.listdir(repo_path): # while not in the root of the repo
     repo_path = repo_path.parent #go up one level
@@ -49,6 +52,7 @@ from huggingface_hub import get_full_repo_name, create_repo, upload_folder, HfAp
 # import the MRIDataset class from the dataset folder
 from dataset.build_dataset import MRIDataset
 
+import time
 
 # Check the diffusers version
 check_min_version("0.15.0.dev0")
@@ -209,6 +213,7 @@ def main():
     # global variables
     global_step = 0
 
+    start_time = time.time()
     #### 3.2 Training loop
     for epoch in range(num_epochs): # Loop over the epochs
         model.train()
@@ -272,52 +277,54 @@ def main():
         accelerator.wait_for_everyone() # wait for all processes to finish the epoch
 
         ##### 4. Saving the model and visual samples
-        if accelerator.is_main_process: # only main process saves the model
-            if epoch % config['logging']['images']['freq_epochs'] == 0 or epoch == num_epochs - 1: # if in image saving epoch or last one
-                # create random noise
-                latent_inf = torch.randn( # Use seed to denoise always the same images
-                    config['logging']['images']['batch_size'], config['model']['in_channels'],
-                    config['processing']['resolution'], config['processing']['resolution'],
-                    generator=torch.manual_seed(17844)
-                ).to(accelerator.device)
-                latent_inf *= noise_scheduler.init_noise_sigma # init noise is 1.0 in vanilla case
-                # denoise images
-                for t in tqdm(noise_scheduler.timesteps): # markov chain
-                    latent_inf = noise_scheduler.scale_model_input(latent_inf, t) # # Apply scaling, no change in vanilla case
-                    with torch.no_grad(): # predict the noise residual with the unet
-                        noise_pred = model(latent_inf, t).sample
-                    latent_inf = noise_scheduler.step(noise_pred, t, latent_inf).prev_sample # compute the previous noisy sample x_t -> x_t-1
-                # save the four latent channels as a .npy
-                # create dir latent_log if not exists
-                if not os.path.exists('latent_log'):
-                    os.makedirs('latent_log')
-                for b in range(config['logging']['images']['batch_size']):
-                    for i in range(4):
-                        np.save(f'latent_log/latent_{b}_{i}.npy', latent_inf[b,i].cpu().numpy())
-                # log images
-                if config['logging']['logger_name'] == 'wandb':
-                    for i in range (4): # log the 4 latent channels
-                        accelerator.get_tracker('wandb').log(
-                            {f"latent_{i}": [wandb.Image(latent_inf[b,i], mode='F') for b in range(config['logging']['images']['batch_size'])]},
-                            step=global_step,
-                        )
-                    # log the decoded images
-                    if config['logging']['images']['scaled']:
-                        latent_inf /= vae.config.scaling_factor
-                    latent_inf = latent_inf.to('cpu')
-                    reconstructed = vae.decode(latent_inf).sample
-                    # reconstructed = vae.decode(latent_inf, return_dist=False)[0]
-                    accelerator.get_tracker('wandb').log(
-                        {"reconstructed": [wandb.Image(reconstructed[b][0], mode='F') for b in range(config['logging']['images']['batch_size'])]},
-                        step=global_step,
-                    )
-            # save model
-            if epoch % config['saving']['local']['saving_frequency'] == 0 or epoch == num_epochs - 1: # if in model saving epoch or last one
-                # create pipeline # unwrap the model
-                pipeline = DDPMPipeline(unet=accelerator.unwrap_model(model), scheduler=noise_scheduler)
-                pipeline.save_pretrained(str(pipeline_dir))
-                logger.info(f"Saving model to {pipeline_dir}")
+        # if accelerator.is_main_process: # only main process saves the model
+        #     if epoch % config['logging']['images']['freq_epochs'] == 0 or epoch == num_epochs - 1: # if in image saving epoch or last one
+        #         # create random noise
+        #         latent_inf = torch.randn( # Use seed to denoise always the same images
+        #             config['logging']['images']['batch_size'], config['model']['in_channels'],
+        #             config['processing']['resolution'], config['processing']['resolution'],
+        #             generator=torch.manual_seed(17844)
+        #         ).to(accelerator.device)
+        #         latent_inf *= noise_scheduler.init_noise_sigma # init noise is 1.0 in vanilla case
+        #         # denoise images
+        #         for t in tqdm(noise_scheduler.timesteps): # markov chain
+        #             latent_inf = noise_scheduler.scale_model_input(latent_inf, t) # # Apply scaling, no change in vanilla case
+        #             with torch.no_grad(): # predict the noise residual with the unet
+        #                 noise_pred = model(latent_inf, t).sample
+        #             latent_inf = noise_scheduler.step(noise_pred, t, latent_inf).prev_sample # compute the previous noisy sample x_t -> x_t-1
+        #         # save the four latent channels as a .npy
+        #         # create dir latent_log if not exists
+        #         if not os.path.exists('latent_log'):
+        #             os.makedirs('latent_log')
+        #         for b in range(config['logging']['images']['batch_size']):
+        #             for i in range(4):
+        #                 np.save(f'latent_log/latent_{b}_{i}.npy', latent_inf[b,i].cpu().numpy())
+        #         # log images
+        #         if config['logging']['logger_name'] == 'wandb':
+        #             for i in range (4): # log the 4 latent channels
+        #                 accelerator.get_tracker('wandb').log(
+        #                     {f"latent_{i}": [wandb.Image(latent_inf[b,i], mode='F') for b in range(config['logging']['images']['batch_size'])]},
+        #                     step=global_step,
+        #                 )
+        #             # log the decoded images
+        #             if config['logging']['images']['scaled']:
+        #                 latent_inf /= vae.config.scaling_factor
+        #             latent_inf = latent_inf.to('cpu')
+        #             reconstructed = vae.decode(latent_inf).sample
+        #             # reconstructed = vae.decode(latent_inf, return_dist=False)[0]
+        #             accelerator.get_tracker('wandb').log(
+        #                 {"reconstructed": [wandb.Image(reconstructed[b][0], mode='F') for b in range(config['logging']['images']['batch_size'])]},
+        #                 step=global_step,
+        #             )
+        #     # save model
+        #     if epoch % config['saving']['local']['saving_frequency'] == 0 or epoch == num_epochs - 1: # if in model saving epoch or last one
+        #         # create pipeline # unwrap the model
+        #         pipeline = DDPMPipeline(unet=accelerator.unwrap_model(model), scheduler=noise_scheduler)
+        #         pipeline.save_pretrained(str(pipeline_dir))
+        #         logger.info(f"Saving model to {pipeline_dir}")
     logger.info("Finished training!\n")
+    end_time = time.time()
+    logger.info(f"Total training time: {end_time - start_time:.2f} seconds, {((end_time - start_time) / 60):.2f} minutes.")
     
     ### 5. Push the model to Hugging Face Hub
     hub_model_id = get_full_repo_name(config['saving']['hf']['repo_name'])
