@@ -50,7 +50,7 @@ enabling conditional generation aligned with dataset distribution.
   - Beta schedule: linear (β_start=0.0001, β_end=0.02)
 - Gradient Clipping: Max norm 1.0
 - Mixed Precision: Disabled
-- Hardware: Single NVIDIA A30 GPU (4 dataloader workers)
+- Hardware: Single NVIDIA A30 GPU
 
 ## ✍️ Fine-Tuning Strategy
 

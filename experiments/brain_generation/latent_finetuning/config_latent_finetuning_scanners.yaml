@@ -1,6 +1,6 @@
 # 1. Image processing
 processing:
-  dataset: "/home/benet/data/biomarkem2D/all/latent" #"/home/benet/data/WMH2017_split/train/latent" # path to the dataset directory
+  dataset: "/home/benet/data/biomarkem2D/train/latent" #"/home/benet/data/WMH2017_split/train/latent" # path to the dataset directory
   resolution: 32 # image size or resolution generate the latents. Used: 32 (to generate 256x256 images)
   batch_size: 8 # batch size for dataloader. Used: 8
   num_workers: 4 # number of workers for dataloader. 0 means no extra processes are used (run in main process)

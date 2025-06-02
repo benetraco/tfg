@@ -7,7 +7,7 @@ from pathlib import Path
 import wandb
 import random
 # Restrict PyTorch to use only GPU X
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 import numpy as np
 import torch
@@ -20,6 +20,7 @@ from huggingface_hub import create_repo, upload_folder
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
+import torch.nn.functional as F
 from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
@@ -37,6 +38,8 @@ from diffusers.utils import check_min_version
 from sklearn.model_selection import train_test_split
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
+
+import time
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.13.0.dev0")
@@ -140,6 +143,204 @@ def log_validation_dataset(text_encoder, tokenizer, unet, vae, args, accelerator
 
     del pipeline
     torch.cuda.empty_cache()
+
+def log_validation_guidance_effects(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset):
+    """
+    Logs validation images using different guidance values for a fixed subset of validation samples.
+    """
+    logger.info("Running classifier-free guidance validation... Logging 8 images across multiple guidance values.")
+
+    # Create pipeline
+    pipeline = StableDiffusionInpaintPipeline.from_pretrained(
+        args.pretrained_model_name_or_path,
+        text_encoder=accelerator.unwrap_model(text_encoder),
+        tokenizer=tokenizer,
+        unet=accelerator.unwrap_model(unet),
+        vae=vae,
+        torch_dtype=weight_dtype,
+        safety_checker=None,
+    )
+    pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
+    pipeline = pipeline.to(accelerator.device)
+    pipeline.set_progress_bar_config(disable=True)
+
+    # Use fixed seed for reproducibility
+    generator = None if args.seed is None else torch.Generator(device=accelerator.device).manual_seed(args.seed)
+
+    # Select top 50 by mask size and then sample 8
+    mask_sums = [val_dataset[i]["lesion_masks"].sum().item() for i in range(len(val_dataset))]
+    top_50_indices = sorted(range(len(mask_sums)), key=lambda i: mask_sums[i], reverse=True)[:50]
+    rng = random.Random(args.seed)
+    selected_for_logging = rng.sample(top_50_indices, 8)
+
+    guidance_values = [0.0, 1.0, 3.0, 5.0]
+    all_logs = []
+
+    for idx in selected_for_logging:
+        input_image_pil = val_dataset[idx]["PIL_images"]
+        mask_pil = transforms.ToPILImage()(val_dataset[idx]["lesion_masks"].cpu())
+
+        row_log = {}
+        row_log["Input"] = wandb.Image(input_image_pil, caption="Input")
+        row_log["Mask"] = wandb.Image(mask_pil, caption="Mask")
+
+        for guidance in guidance_values:
+            with torch.autocast("cuda"):
+                image = pipeline(
+                    args.validation_prompt,
+                    image=input_image_pil,
+                    mask_image=mask_pil,
+                    num_inference_steps=25,
+                    guidance_scale=guidance,
+                    generator=generator,
+                ).images[0]
+
+            # Resize if needed
+            if image.size != input_image_pil.size:
+                image = image.resize(input_image_pil.size)
+
+            row_log[f"Guidance {guidance}"] = wandb.Image(image, caption=f"Guidance {guidance}")
+
+        all_logs.append({f"CF Guidance Sample {idx}": list(row_log.values())})
+
+    # Log to wandb
+    for tracker in accelerator.trackers:
+        if tracker.name == "wandb":
+            for log_entry in all_logs:
+                tracker.log(log_entry, step=global_step)
+
+    del pipeline
+    torch.cuda.empty_cache()
+
+def log_validation_by_domain_guidance(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset):
+    """
+    Logs up to 3 validation samples per dataset (VH, SHIFTS, WMH2017) using the correct prompt
+    and shows results across multiple guidance values in a single W&B row per image.
+    """
+    logger.info("Running multi-guidance validation per domain with grouped logging.")
+
+    from diffusers import StableDiffusionInpaintPipeline, DPMSolverMultistepScheduler
+    from torchvision import transforms
+    import wandb
+
+    # Build pipeline
+    pipeline = StableDiffusionInpaintPipeline.from_pretrained(
+        args.pretrained_model_name_or_path,
+        text_encoder=accelerator.unwrap_model(text_encoder),
+        tokenizer=tokenizer,
+        unet=accelerator.unwrap_model(unet),
+        vae=vae,
+        torch_dtype=weight_dtype,
+        safety_checker=None,
+    )
+    pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
+    pipeline = pipeline.to(accelerator.device)
+    pipeline.set_progress_bar_config(disable=True)
+
+    generator = None if args.seed is None else torch.Generator(device=accelerator.device).manual_seed(args.seed)
+
+    guidance_values = [0.0, 1.0, 3.0, 5.0]
+    dataset_prompts = {
+        "SHIFTS": "SHIFTS multiple sclerosis lesion in a FLAIR MRI",
+        "WMH2017": "WMH2017 multiple sclerosis lesion in a FLAIR MRI",
+        "VH": "VH multiple sclerosis lesion in a FLAIR MRI"
+    }
+
+    lesion_candidates = {"SHIFTS": [], "VH": [], "WMH2017": []}
+    for idx in range(len(val_dataset)):
+        filename = val_dataset[idx]["image_paths"].name.lower()
+        if "dev" in filename or "test" in filename or "eval" in filename:
+            tag = "SHIFTS"
+        elif "wmh2017" in filename:
+            tag = "WMH2017"
+        elif "vh" in filename:
+            tag = "VH"
+        else:
+            continue
+        lesion_sum = val_dataset[idx]["lesion_masks"].sum().item()
+        lesion_candidates[tag].append((idx, lesion_sum))
+
+    # Select up to 3 top lesions per domain
+    selected_samples = {
+        tag: [i for i, _ in sorted(lesion_candidates[tag], key=lambda x: x[1], reverse=True)[:3]]
+        for tag in dataset_prompts
+    }
+
+    all_logs = []
+
+    for tag, indices in selected_samples.items():
+        prompt = dataset_prompts[tag]
+        for idx in indices:
+            input_image_pil = val_dataset[idx]["PIL_images"]
+            mask_pil = transforms.ToPILImage()(val_dataset[idx]["lesion_masks"].cpu())
+
+            row_log = {}
+            row_log["Input"] = wandb.Image(input_image_pil, caption="Input")
+            row_log["Mask"] = wandb.Image(mask_pil, caption="Mask")
+
+            for guidance in guidance_values:
+                with torch.autocast("cuda"):
+                    result = pipeline(
+                        prompt,
+                        image=input_image_pil,
+                        mask_image=mask_pil,
+                        num_inference_steps=25,
+                        guidance_scale=guidance,
+                        generator=generator,
+                    ).images[0]
+
+                if result.size != input_image_pil.size:
+                    result = result.resize(input_image_pil.size)
+
+                row_log[f"Guidance {guidance}"] = wandb.Image(result, caption=f"{tag} | guidance={guidance}")
+
+            all_logs.append({f"{tag} Sample {idx}": list(row_log.values())})
+
+    for tracker in accelerator.trackers:
+        if tracker.name == "wandb":
+            for log_row in all_logs:
+                tracker.log(log_row, step=global_step)
+
+    del pipeline
+    torch.cuda.empty_cache()
+
+def log_token_embedding_similarity(text_encoder, tokenizer, accelerator, step):
+    """
+    Logs cosine similarity between the dataset-specific prompts.
+    """
+    prompts = ["SHIFTS multiple sclerosis lesion in a FLAIR MRI",
+               "VH multiple sclerosis lesion in a FLAIR MRI",
+               "WMH2017 multiple sclerosis lesion in a FLAIR MRI"]
+
+    with torch.no_grad():
+        embedding_layer = text_encoder.get_input_embeddings()
+
+        embeddings = []
+        for prompt in prompts:
+            token_ids = tokenizer(prompt, return_tensors="pt").input_ids
+            token_ids = token_ids.to(accelerator.device)
+            embedding = embedding_layer(token_ids).mean(dim=1)
+            embeddings.append(embedding)
+
+        # Compute cosine similarities
+        sim_shifts_vh = F.cosine_similarity(embeddings[0], embeddings[1]).item()
+        sim_shifts_wmh = F.cosine_similarity(embeddings[0], embeddings[2]).item()
+        sim_vh_wmh = F.cosine_similarity(embeddings[1], embeddings[2]).item()
+
+        if accelerator.is_main_process:
+            log_data = {
+                "sim/SHIFTS–VH": sim_shifts_vh,
+                "sim/SHIFTS–WMH2017": sim_shifts_wmh,
+                "sim/VH–WMH2017": sim_vh_wmh,
+            }
+            if accelerator.trackers:
+                for tracker in accelerator.trackers:
+                    if tracker.name == "wandb":
+                        tracker.log(log_data, step=step)
+            else:
+                print(f"[Step {step}] Cosine similarities:")
+                for k, v in log_data.items():
+                    print(f"  {k}: {v:.4f}")
 
 def prepare_mask_and_masked_image(image, mask, black_mask=True, discretize_mask=True):
     image = np.array(image.convert("RGB"))
@@ -268,7 +469,20 @@ class MSInpaintingDataset(Dataset):
         if not instance_image.mode == "RGB":
             instance_image = instance_image.convert("RGB")
         instance_image = self.image_transforms_resize_and_crop(instance_image)
-        instance_prompt = self.instance_prompt
+        
+        # instance_prompt = self.instance_prompt
+        # Assign prompt based on image name (you can customize this)
+        filename = instance_image_path.name.lower()
+        if "dev" in filename or "test" in filename or "eval" in filename:
+            instance_prompt = f"SHIFTS multiple sclerosis lesion in a FLAIR MRI"
+        elif "WMH2017" in filename:
+            instance_prompt = f"WMH2017 multiple sclerosis lesion in a FLAIR MRI"
+        elif "VH" in filename:
+            instance_prompt = f"VH multiple sclerosis lesion in a FLAIR MRI"
+        else:
+            instance_prompt = f"multiple sclerosis lesion in a FLAIR MRI"
+
+
         mask = Image.open(self.mask_paths[index])
         if not mask.mode == "L":
             mask = mask.convert("L")
@@ -286,6 +500,8 @@ class MSInpaintingDataset(Dataset):
             truncation=True,
             max_length=self.tokenizer.model_max_length,
         ).input_ids
+        example["image_paths"] = self.image_paths[index]
+
 
         return example
 
@@ -354,9 +570,29 @@ def main():
         tokenizer = CLIPTokenizer.from_pretrained(args.tokenizer_name)
     elif args.pretrained_model_name_or_path:
         tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer")
+    
+    # Add special tokens (dataset-specific) to tokenizer
+    new_tokens = ["SHIFTS", "VH", "WMH2017"]
+    num_added_tokens = tokenizer.add_tokens(new_tokens)
+
+    # Load text encoder
+    text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder")
+    text_encoder.resize_token_embeddings(len(tokenizer))
+
+    # Initialize embeddings for new tokens from the "MRI" token
+    embedding_layer = text_encoder.get_input_embeddings()
+    base_token = "MRI"
+    base_token_id = tokenizer.convert_tokens_to_ids(base_token)
+    base_embedding = embedding_layer.weight[base_token_id].detach().clone()
+
+    for token in new_tokens:
+        token_id = tokenizer.convert_tokens_to_ids(token)
+        with torch.no_grad():
+            # Initialize by adding slight noise to differentiate
+            embedding_layer.weight[token_id] = base_embedding + 0.01 * torch.randn_like(base_embedding)
+        print(f"Token '{token}' -> ID {token_id}, initialized from '{base_token}'")
 
     # Load models and create wrapper for stable diffusion
-    text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder")
     vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae")
     unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet")
 
@@ -547,8 +783,11 @@ def main():
             resume_step = resume_global_step % (num_update_steps_per_epoch * args.gradient_accumulation_steps)
 
     # log_validate before training
-    log_validation_dataset(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset)
+    # log_validation_dataset(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset)
+    # log_validation_guidance_effects(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset)
+    # log_validation_by_domain_guidance(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset)
 
+    start_time = time.time()
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train()
         train_loss = [] # Store the loss for logging
@@ -595,7 +834,18 @@ def main():
                 latent_model_input = torch.cat([noisy_latents, masks, masked_latents], dim=1)
 
                 # Get the text embedding for conditioning
-                encoder_hidden_states = text_encoder(batch["input_ids"])[0]
+                # Randomly drop prompt with 10% chance
+                bsz = batch["input_ids"].shape[0]
+                use_uncond = torch.rand(bsz) < 0.1  # 10% unconditional
+                # Build conditional and unconditional embeddings
+                cond_embeds = text_encoder(batch["input_ids"])[0]
+                uncond_input_ids = torch.full_like(batch["input_ids"], tokenizer.pad_token_id)
+                uncond_embeds = text_encoder(uncond_input_ids)[0]
+                # Choose per-sample embedding
+                encoder_hidden_states = torch.stack([
+                    uncond_embeds[i] if use_uncond[i] else cond_embeds[i]
+                    for i in range(bsz)
+                ])
 
                 # Predict the noise residual
                 noise_pred = unet(latent_model_input, timesteps, encoder_hidden_states).sample
@@ -641,6 +891,9 @@ def main():
                         logger.info(f"Saved state to {save_path}")
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             
+            if accelerator.sync_gradients: # and (global_step % 50 == 0):
+                log_token_embedding_similarity(text_encoder, tokenizer, accelerator, global_step)
+
             pbar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
@@ -651,10 +904,16 @@ def main():
         accelerator.wait_for_everyone()
 
         # Log images to validate the model
-        if (epoch + 1) % args.validation_epochs == 0:
-            if accelerator.is_main_process:
-                log_validation_dataset(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset)
+        # if (epoch + 1) % args.validation_epochs == 0:
+        #     if accelerator.is_main_process:
+        #         # log_validation_dataset(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset)
+        #         # log_validation_guidance_effects(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset)
+        #         log_validation_by_domain_guidance(text_encoder, tokenizer, unet, vae, args, accelerator, weight_dtype, global_step, val_dataset)
 
+    logger.info("Training complete.")
+    end_time = time.time()
+    logger.info(f"Total training time: {end_time - start_time:.2f} seconds, {((end_time - start_time) / 60):.2f} minutes.")
+    
     # Create the pipeline using using the trained modules and save it.
     if accelerator.is_main_process:
         pipeline = StableDiffusionInpaintPipeline.from_pretrained(
