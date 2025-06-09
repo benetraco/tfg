@@ -419,6 +419,8 @@ class CreateSample:
         for bbox in self.lesion_bboxes:
             x1, y1, x2, y2 = bbox
             diff_bbox = diff_image[y1:y2, x1:x2]
+            #plot the diff_bbox
+            plt.imshow(diff_bbox, cmap='gray')
             diff_bbox = (diff_bbox - diff_bbox.min()) / (diff_bbox.max() - diff_bbox.min())
             diff_bbox_uint8 = (diff_bbox * 255).astype(np.uint8)
             _, diff_bbox_bin = cv2.threshold(diff_bbox_uint8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
