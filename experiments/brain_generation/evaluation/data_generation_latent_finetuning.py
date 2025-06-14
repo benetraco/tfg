@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import torch
 import gc
 from tqdm import tqdm
@@ -122,7 +122,7 @@ if __name__ == "__main__":
         # prompts=["SHIFTS FLAIR MRI", "VH FLAIR MRI", "WMH2017 FLAIR MRI"],
         prompts=["Philips FLAIR MRI", "Siemens FLAIR MRI", "GE FLAIR MRI",],
         # guidance_values=[1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 0.0],
-        guidance_values=[1.0, 2.0, 3.0, 5.0, 0.0],
+        guidance_values=[7.0, 10.0],
         # guidance_values=[10.0],
         images_per_combination=25,
         # batch_size=4,
